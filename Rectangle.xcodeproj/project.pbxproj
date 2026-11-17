@@ -12,6 +12,7 @@
 		9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824701F22AF9B7E0037B409 /* RectangleTests.swift */; };
 		9877B63A29C8AC0E00F02D74 /* MASShortcut in Frameworks */ = {isa = PBXBuildFile; productRef = 9877B63929C8AC0E00F02D74 /* MASShortcut */; };
 		9877B63D29C8AC3600F02D74 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 9877B63C29C8AC3600F02D74 /* Sparkle */; };
+		433FB88815F30ADC0335F861 /* SnapDividerGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32A5C7ED30FB927A307BA8B2 /* SnapDividerGeometryTests.swift */; };
 		AF09A0000000000000000003 /* GridTilingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF09A0000000000000000004 /* GridTilingTests.swift */; };
 		AF09B1000000000000000003 /* DisplayTransferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF09B1000000000000000004 /* DisplayTransferTests.swift */; };
 		AF09B1000000000000000005 /* CooperativeResizeExecutionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF09B1000000000000000006 /* CooperativeResizeExecutionTests.swift */; };
@@ -34,6 +35,7 @@
 		9824701B22AF9B7E0037B409 /* RectangleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RectangleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9824701F22AF9B7E0037B409 /* RectangleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RectangleTests.swift; sourceTree = "<group>"; };
 		9824702122AF9B7E0037B409 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		32A5C7ED30FB927A307BA8B2 /* SnapDividerGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapDividerGeometryTests.swift; sourceTree = "<group>"; };
 		AF09A0000000000000000004 /* GridTilingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridTilingTests.swift; sourceTree = "<group>"; };
 		AF09B1000000000000000004 /* DisplayTransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayTransferTests.swift; sourceTree = "<group>"; };
 		AF09B1000000000000000006 /* CooperativeResizeExecutionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CooperativeResizeExecutionTests.swift; sourceTree = "<group>"; };
@@ -110,6 +112,7 @@
 				AF09B1000000000000000006 /* CooperativeResizeExecutionTests.swift */,
 				944F25D02CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift */,
 				de0950b8b00f40308934a523 /* JSONDefaultTests.swift */,
+				32A5C7ED30FB927A307BA8B2 /* SnapDividerGeometryTests.swift */,
 				9824702122AF9B7E0037B409 /* Info.plist */,
 			);
 			path = RectangleTests;
@@ -279,6 +282,7 @@
 				AF09B1000000000000000005 /* CooperativeResizeExecutionTests.swift in Sources */,
 				944F25D12CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift in Sources */,
 				01f52cab9bce43359775bdd7 /* JSONDefaultTests.swift in Sources */,
+				433FB88815F30ADC0335F861 /* SnapDividerGeometryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

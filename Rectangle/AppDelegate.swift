@@ -23,6 +23,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowCalculationFactory: WindowCalculationFactory!
     private var snappingManager: SnappingManager!
     private var stackBadgeManager: StackBadgeManager!
+    private var snapDividerManager: SnapDividerManager!
     private var titleBarManager: TitleBarManager!
     private var greenButtonManager: GreenButtonManager!
     private var newWindowActionManager: NewWindowActionManager!
@@ -148,6 +149,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.applicationToggle = ApplicationToggle(shortcutManager: shortcutManager)
         self.snappingManager = SnappingManager()
         self.stackBadgeManager = StackBadgeManager()
+        self.snapDividerManager = SnapDividerManager()
         self.titleBarManager = TitleBarManager()
         self.greenButtonManager = GreenButtonManager()
         self.newWindowActionManager = NewWindowActionManager()
