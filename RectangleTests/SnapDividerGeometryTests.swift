@@ -108,6 +108,61 @@ final class SnapDividerGeometryTests: XCTestCase {
         XCTAssertFalse(seam.isNear(CGPoint(x: 720, y: 463), slop: 4))
         XCTAssertFalse(seam.isNear(CGPoint(x: 720, y: 24), slop: 4))
     }
+
+    func testClearStretchIsTheWholeSpanWhenNothingCoversIt() {
+        XCTAssertEqual(SnapDividerGeometry.clearStretch(of: 25...900, around: 400, blockedBy: []), 25...900)
+    }
+
+    func testClearStretchStopsAtTheNearestCoverOnEachSide() {
+        let blocked: [ClosedRange<CGFloat>] = [50...100, 120...200, 600...700, 650...800]
+
+        XCTAssertEqual(SnapDividerGeometry.clearStretch(of: 25...900, around: 400, blockedBy: blocked), 200...600)
+        XCTAssertEqual(SnapDividerGeometry.clearStretch(of: 25...900, around: 850, blockedBy: blocked), 800...900)
+        XCTAssertEqual(SnapDividerGeometry.clearStretch(of: 25...900, around: 30, blockedBy: blocked), 25...50)
+    }
+
+    func testClearStretchIgnoresCoverBeyondTheSpan() {
+        XCTAssertEqual(SnapDividerGeometry.clearStretch(of: 25...900, around: 400, blockedBy: [-200...10, 950...1200]),
+                       25...900)
+    }
+
+    func testNoClearStretchWhereTheSeamIsCoveredOrOutsideTheSpan() {
+        XCTAssertNil(SnapDividerGeometry.clearStretch(of: 25...900, around: 400, blockedBy: [300...500]))
+        XCTAssertNil(SnapDividerGeometry.clearStretch(of: 25...900, around: 950, blockedBy: []))
+    }
+
+    private func handleFrame(position: CGFloat = 720, gap: CGFloat = 0, within stretch: ClosedRange<CGFloat>,
+                             minimumLength: CGFloat = 48) -> CGRect {
+        SnapDividerGeometry.handleFrame(on: SnapDividerGeometry.Seam(position: position, gap: gap, span: 25...925),
+                                        within: stretch, thickness: 6, lengthFraction: 1.0 / 3.0,
+                                        minimumLength: minimumLength)
+    }
+
+    func testHandleCoversAThirdOfTheStretchCentredOnTheSeam() {
+        XCTAssertEqual(handleFrame(within: 25...925), CGRect(x: 717, y: 325, width: 6, height: 300))
+    }
+
+    func testHandleIsCentredInAGap() {
+        // Facing edges at 710 and 730: the handle leaves 7 pt on either side.
+        XCTAssertEqual(handleFrame(position: 720, gap: 20, within: 25...925).minX, 717)
+        XCTAssertEqual(handleFrame(position: 720, gap: 20, within: 25...925).maxX, 723)
+    }
+
+    func testHandleIsCentredOnTheClearStretchRatherThanTheWholeSeam() {
+        XCTAssertEqual(handleFrame(within: 625...925), CGRect(x: 717, y: 725, width: 6, height: 100))
+    }
+
+    func testHandleKeepsAMinimumLengthButNeverOutgrowsTheStretch() {
+        XCTAssertEqual(handleFrame(within: 100...200).height, 48)
+        XCTAssertEqual(handleFrame(within: 100...200).midY, 150)
+        XCTAssertEqual(handleFrame(within: 100...130), CGRect(x: 717, y: 100, width: 6, height: 30))
+    }
+
+    func testHandleLandsOnWholePoints() {
+        let frame = handleFrame(position: 723.5, within: 25...462)
+
+        XCTAssertEqual(frame, frame.integral)
+    }
 }
 
 final class SnapDividerMatchTests: XCTestCase {
@@ -172,7 +227,42 @@ final class SnapDividerMatchTests: XCTestCase {
         let windows = [cover, window(1, leftHalf), window(2, rightHalf)]
 
         XCTAssertNil(match(windows))
-        XCTAssertNotNil(match(windows, at: CGPoint(x: 720, y: 700)), "The seam is free below the covering window")
+        XCTAssertEqual(match(windows, at: CGPoint(x: 720, y: 700))?.clearSpan, 600...900,
+                       "The seam is free below the covering window")
+        XCTAssertEqual(match(windows, at: CGPoint(x: 720, y: 150))?.clearSpan, 25...200,
+                       "The seam is free above the covering window")
+    }
+
+    func testTooShortAFreeStretchDoesNotMatch() {
+        let cover = window(3, CGRect(x: 400, y: 110, width: 600, height: 700))
+        let windows = [cover, window(1, leftHalf), window(2, rightHalf)]
+
+        XCTAssertNil(match(windows, at: CGPoint(x: 720, y: 60)))
+        XCTAssertNil(match(windows, at: CGPoint(x: 720, y: 850)))
+    }
+
+    func testClearSpanIsTheWholeSeamWhenNothingCoversIt() {
+        XCTAssertEqual(match([window(1, leftHalf), window(2, rightHalf)])?.clearSpan, 25...900)
+    }
+
+    func testWindowBesideTheSeamDoesNotShortenTheClearSpan() {
+        let beside = window(3, CGRect(x: 100, y: 200, width: 600, height: 400))
+        let justTouching = window(4, CGRect(x: 100, y: 650, width: 613, height: 100))
+        let windows = [beside, justTouching, window(1, leftHalf), window(2, rightHalf)]
+
+        XCTAssertEqual(match(windows)?.clearSpan, 25...650)
+    }
+
+    func testMatchLookedUpAgainAtTheHandleIsTheSame() {
+        let cover = window(3, CGRect(x: 400, y: 200, width: 600, height: 400))
+        let windows = [cover, window(1, leftHalf), window(2, rightHalf)]
+        let first = match(windows, at: CGPoint(x: 723, y: 880))
+        let again = match(windows, at: CGPoint(x: 720, y: 750))
+
+        XCTAssertNotNil(first)
+        XCTAssertEqual(again.map { first?.isSame(as: $0) }, true)
+        XCTAssertEqual(match(windows.dropFirst().map { $0 }, at: CGPoint(x: 720, y: 750)).map { first?.isSame(as: $0) },
+                       false, "Uncovering the seam changes the match")
     }
 
     func testNarrowWindowCoveringTheSeamBetweenTheProbesBlocksTheMatch() {
