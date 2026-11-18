@@ -143,10 +143,13 @@ enum SnapDividerResize {
         ///
         /// Position and size can only be set one after the other, so for a
         /// moment the window is in neither frame. The order is chosen so
-        /// that it then reaches past its right edge, which at the edge of
-        /// the screen cannot be seen, and never falls short of it, which
-        /// would show what is behind: a window that shrinks is moved first,
-        /// one that grows is resized first.
+        /// that it then reaches past its right edge and never falls short
+        /// of it: a window that shrinks is moved first, one that grows is
+        /// resized first. Falling short would show what is behind for as
+        /// long as the app takes to resize. Reaching past cannot be seen at
+        /// the edge of the screen, and where another window or display lies
+        /// beyond, a growing window is over it only for as long as the move
+        /// that follows takes.
         func settleTrailing(_ index: Int) -> Bool {
             let window = trailing[index]
             let outerEdge = target.trailing[index].maxX

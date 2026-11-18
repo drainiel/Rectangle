@@ -1,4 +1,4 @@
-/// SnapDividerGeometryTests.swift
+/// SnapDividerTests.swift
 
 import XCTest
 import CoreGraphics
@@ -277,6 +277,76 @@ final class SnapDividerMatchTests: XCTestCase {
         XCTAssertEqual(match([window(1, leftHalf), window(2, rightHalf)])?.clearSpan, 25...900)
     }
 
+    func testWindowStackedBehindOneOfTheTwoDoesNotCoverTheSeam() {
+        // Two windows in the left half, one behind the other. Which of the
+        // three was used last must make no difference.
+        let behind = window(3, leftHalf)
+        for windows in [[window(1, leftHalf), behind, window(2, rightHalf)],
+                        [window(1, leftHalf), window(2, rightHalf), behind],
+                        [window(2, rightHalf), window(1, leftHalf), behind]] {
+            let match = match(windows)
+
+            XCTAssertEqual(match?.left.id, 1)
+            XCTAssertEqual(match?.right.id, 2)
+            XCTAssertEqual(match?.clearSpan, 25...900)
+        }
+    }
+
+    func testWindowStackedBehindTheRightOneDoesNotCoverTheSeam() {
+        let windows = [window(2, rightHalf), window(3, rightHalf), window(1, leftHalf)]
+
+        XCTAssertEqual(match(windows)?.clearSpan, 25...900)
+    }
+
+    func testWindowBehindOneThatReachesOverTheOtherCoversTheSeam() {
+        // Behind the left window, but wider, so it lies over the right one's edge.
+        let reaching = window(3, CGRect(x: 0, y: 200, width: 760, height: 400))
+        let windows = [window(1, leftHalf), reaching, window(2, rightHalf)]
+
+        XCTAssertNil(match(windows))
+        XCTAssertEqual(match(windows, at: CGPoint(x: 720, y: 700))?.clearSpan, 600...900)
+    }
+
+    func testWindowHiddenBehindTheNearerOfTwoThatOverlapDoesNotCoverTheSeam() {
+        // The left window would not shrink and lies over the right one's
+        // edge; a second window is stacked behind it.
+        let wide = CGRect(x: 0, y: 25, width: 726, height: 875)
+        let windows = [window(1, wide), window(3, wide), window(2, rightHalf)]
+
+        XCTAssertEqual(match(windows, at: CGPoint(x: 723, y: 400))?.clearSpan, 25...900)
+    }
+
+    func testWindowShowingThroughAGapFromBetweenTheTwoDoesNotCoverTheSeam() {
+        let left = CGRect(x: 20, y: 45, width: 690, height: 835)
+        let right = CGRect(x: 730, y: 45, width: 690, height: 835)
+        // Behind the left window and a little wider, so it shows in the gap
+        // without reaching the right window.
+        let between = window(3, CGRect(x: 20, y: 45, width: 700, height: 835))
+
+        XCTAssertEqual(match([window(1, left), between, window(2, right)], gap: 20)?.clearSpan, 45...880)
+    }
+
+    func testAMovedOuterEdgeMakesItADifferentMatch() {
+        let before = match([window(1, leftHalf), window(2, rightHalf)])
+        let narrower = CGRect(x: 720, y: 25, width: 600, height: 875)
+        let after = match([window(1, leftHalf), window(2, narrower)])
+
+        XCTAssertNotNil(before)
+        XCTAssertEqual(after?.seam, before?.seam, "The seam itself has not moved")
+        XCTAssertEqual(after.map { before?.isSame(as: $0) }, false)
+    }
+
+    func testMatchWithAWindowOfAnIgnoredAppIsRecognised() {
+        let match = match([window(1, leftHalf), window(2, rightHalf)])
+        let bundles: [pid_t: String] = [1: "com.example.editor", 2: "com.example.terminal"]
+
+        XCTAssertEqual(match?.involvesIgnoredApp(disabledApps: ["com.example.terminal"]) { bundles[$0] }, true)
+        XCTAssertEqual(match?.involvesIgnoredApp(disabledApps: ["com.example.other"]) { bundles[$0] }, false)
+        XCTAssertEqual(match?.involvesIgnoredApp(disabledApps: nil) { bundles[$0] }, false)
+        XCTAssertEqual(match?.involvesIgnoredApp(disabledApps: ["com.example.editor"]) { _ in nil }, false,
+                       "An app that cannot be identified is not taken for an ignored one")
+    }
+
     func testWindowBesideTheSeamDoesNotShortenTheClearSpan() {
         let beside = window(3, CGRect(x: 100, y: 200, width: 600, height: 400))
         let justTouching = window(4, CGRect(x: 100, y: 650, width: 613, height: 100))
@@ -365,6 +435,27 @@ final class SnapDividerResizeGeometryTests: XCTestCase {
         XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: -6, configuredGap: 0, tolerance: 8), 0,
                        "A window reaching past its edge")
         XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 23, configuredGap: 20, tolerance: 8), 20)
+    }
+
+    func testIntendedGapOnlyClosesSpaceBeyondTheConfiguredGap() {
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 28, configuredGap: 20, tolerance: 8), 20)
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 29, configuredGap: 20, tolerance: 8), 29)
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 5, configuredGap: 20, tolerance: 8), 5,
+                       "Closer than the gap is not a window that stopped short")
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 0, configuredGap: 10, tolerance: 20), 0,
+                       "Touching windows stay touching however wide the tolerance")
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: -6, configuredGap: 20, tolerance: 8), 20,
+                       "Overlapping windows are parted by the configured gap")
+    }
+
+    func testRemainderIsWhatTheHolesLeave() {
+        XCTAssertEqual(SnapDividerGeometry.remainder(of: 0...100, without: []), [0...100])
+        XCTAssertEqual(SnapDividerGeometry.remainder(of: 0...100, without: [20...30, 60...70]),
+                       [0...20, 30...60, 70...100])
+        XCTAssertEqual(SnapDividerGeometry.remainder(of: 0...100, without: [-10...30, 90...200]), [30...90])
+        XCTAssertEqual(SnapDividerGeometry.remainder(of: 0...100, without: [0...100]), [])
+        XCTAssertEqual(SnapDividerGeometry.remainder(of: 0...100, without: [20...60, 40...80]), [0...20, 80...100])
+        XCTAssertEqual(SnapDividerGeometry.remainder(of: 0...100, without: [200...300]), [0...100])
     }
 
     func testIntendedGapKeepsADistanceThatWasArrangedThatWay() {
@@ -1182,6 +1273,10 @@ final class SnapDividerDragToSnapTests: XCTestCase {
                                             mouseCursorPosition: CGPoint(x: 720, y: 400), mouseButton: .left))
         cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowNumber))
         return try XCTUnwrap(NSEvent(cgEvent: cgEvent))
+    }
+
+    func testTheHandleIsNotOneOfRectanglesWindowsToAccessibility() {
+        XCTAssertFalse(SnapDividerPanel().isAccessibilityElement())
     }
 
     func testAPressOnTheHandleIsItsTarget() throws {

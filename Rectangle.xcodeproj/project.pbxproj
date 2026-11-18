@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		01f52cab9bce43359775bdd7 /* JSONDefaultTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = de0950b8b00f40308934a523 /* JSONDefaultTests.swift */; };
-		433FB88815F30ADC0335F861 /* SnapDividerGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32A5C7ED30FB927A307BA8B2 /* SnapDividerGeometryTests.swift */; };
+		433FB88815F30ADC0335F861 /* SnapDividerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32A5C7ED30FB927A307BA8B2 /* SnapDividerTests.swift */; };
 		944F25D12CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 944F25D02CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift */; };
 		9824702022AF9B7E0037B409 /* RectangleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9824701F22AF9B7E0037B409 /* RectangleTests.swift */; };
 		9877B63A29C8AC0E00F02D74 /* MASShortcut in Frameworks */ = {isa = PBXBuildFile; productRef = 9877B63929C8AC0E00F02D74 /* MASShortcut */; };
@@ -29,7 +29,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		32A5C7ED30FB927A307BA8B2 /* SnapDividerGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapDividerGeometryTests.swift; sourceTree = "<group>"; };
+		32A5C7ED30FB927A307BA8B2 /* SnapDividerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapDividerTests.swift; sourceTree = "<group>"; };
 		944F25D02CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutRecordingObserverTests.swift; sourceTree = "<group>"; };
 		9821405D22B3ED3600ABFB3F /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
 		9824700922AF9B7D0037B409 /* Rectangle.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rectangle.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -112,7 +112,7 @@
 				AF09B1000000000000000006 /* CooperativeResizeExecutionTests.swift */,
 				944F25D02CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift */,
 				de0950b8b00f40308934a523 /* JSONDefaultTests.swift */,
-				32A5C7ED30FB927A307BA8B2 /* SnapDividerGeometryTests.swift */,
+				32A5C7ED30FB927A307BA8B2 /* SnapDividerTests.swift */,
 				9824702122AF9B7E0037B409 /* Info.plist */,
 			);
 			path = RectangleTests;
@@ -282,7 +282,7 @@
 				AF09B1000000000000000005 /* CooperativeResizeExecutionTests.swift in Sources */,
 				944F25D12CE5A144004B2FD2 /* ShortcutRecordingObserverTests.swift in Sources */,
 				01f52cab9bce43359775bdd7 /* JSONDefaultTests.swift in Sources */,
-				433FB88815F30ADC0335F861 /* SnapDividerGeometryTests.swift in Sources */,
+				433FB88815F30ADC0335F861 /* SnapDividerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

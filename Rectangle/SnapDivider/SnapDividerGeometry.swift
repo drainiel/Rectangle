@@ -108,6 +108,20 @@ enum SnapDividerGeometry {
         return lower...upper
     }
 
+    /// The parts of `range` that none of `holes` reaches into.
+    static func remainder(of range: ClosedRange<CGFloat>,
+                          without holes: [ClosedRange<CGFloat>]) -> [ClosedRange<CGFloat>] {
+        holes.reduce([range]) { parts, hole in
+            parts.flatMap { part -> [ClosedRange<CGFloat>] in
+                guard hole.overlaps(part) else { return [part] }
+                var left = [ClosedRange<CGFloat>]()
+                if hole.lowerBound > part.lowerBound { left.append(part.lowerBound...hole.lowerBound) }
+                if hole.upperBound < part.upperBound { left.append(hole.upperBound...part.upperBound) }
+                return left
+            }
+        }
+    }
+
     /// Where the handle is drawn: centred on the seam and on `stretch`,
     /// covering `lengthFraction` of it. The length never drops below
     /// `minimumLength` unless the stretch itself is shorter. The frame lands
@@ -145,13 +159,16 @@ enum SnapDividerGeometry {
     /// The gap a moved seam should leave between the two windows, given how
     /// far apart their facing edges are now.
     ///
-    /// A distance close to the configured gap is taken to be that gap gone
-    /// slightly wrong - a window that stopped short of its edge, or reached a
-    /// little past it - and is put right. Anything else was arranged that
-    /// way, such as windows touching while a gap is configured, and is kept.
+    /// Two things are taken to be the configured gap gone wrong, and are put
+    /// right: windows that overlap, because one would not shrink, and windows
+    /// up to `tolerance` further apart than the gap, because one stopped
+    /// short of its edge. Anything else was arranged that way and is kept,
+    /// such as windows touching while a gap is configured.
     static func intendedGap(distance: CGFloat, configuredGap: CGFloat, tolerance: CGFloat) -> CGFloat {
         let configuredGap = max(0, configuredGap)
-        return abs(distance - configuredGap) <= tolerance ? configuredGap : max(0, distance)
+        let overlaps = distance < 0
+        let stoppedShort = distance > configuredGap && distance <= configuredGap + tolerance
+        return overlaps || stoppedShort ? configuredGap : distance
     }
 
     /// The frames after the seam is moved to `position`, the middle of the

@@ -47,6 +47,11 @@ final class SnapDividerPanel: NSPanel {
         // The panel sets the cursor itself; AppKit's own management would
         // only get in the way.
         disableCursorRects()
+        // Left as an accessibility element, this is one of Rectangle's
+        // windows to anything that asks, and whatever goes by the window
+        // under the cursor would act on the handle: Rectangle's own
+        // mouse-button shortcuts, and other apps' window tools.
+        setAccessibilityElement(false)
         contentView = SnapDividerHandleView()
     }
 

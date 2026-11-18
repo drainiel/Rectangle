@@ -60,11 +60,25 @@ class SnapDividerManager {
         /// covers.
         let clearSpan: ClosedRange<CGFloat>
 
+        /// Whether this is the same seam between the same windows in the
+        /// same places. The places count for every edge, not only the ones
+        /// on the seam: a drag starts from these frames and holds each
+        /// window's outer edge where they say it is.
         func isSame(as other: Match) -> Bool {
-            arrangement == other.arrangement
-                && leading.map { $0.id } == other.leading.map { $0.id }
-                && trailing.map { $0.id } == other.trailing.map { $0.id }
+            func same(_ windows: [WindowInfo], _ others: [WindowInfo]) -> Bool {
+                windows.count == others.count
+                    && zip(windows, others).allSatisfy { $0.id == $1.id && $0.frame == $1.frame }
+            }
+            return arrangement == other.arrangement
+                && same(leading, other.leading) && same(trailing, other.trailing)
                 && seam == other.seam && clearSpan == other.clearSpan
+        }
+
+        /// Whether one of the windows belongs to an app that Rectangle has
+        /// been told to ignore.
+        func involvesIgnoredApp(disabledApps: Set<String>?, bundleIdentifier: (pid_t) -> String?) -> Bool {
+            guard let disabledApps, !disabledApps.isEmpty else { return false }
+            return (leading + trailing).contains { bundleIdentifier($0.pid).map(disabledApps.contains) == true }
         }
     }
 
@@ -228,6 +242,14 @@ class SnapDividerManager {
               // Control shows the windows somewhere else entirely.
               !MissionControl.isActive
         else { return }
+        // An app ignored from the Rectangle menu has its windows left alone
+        // whichever app is in front, as it is by the title bar actions.
+        guard !match.involvesIgnoredApp(disabledApps: Defaults.disabledApps.typedValue, bundleIdentifier: {
+            NSRunningApplication(processIdentifier: $0)?.bundleIdentifier
+        }) else {
+            Logger.log("Snap divider: no handle at \(Self.describe(match.seam.position, match.arrangement)), one of the windows belongs to an app Rectangle ignores")
+            return
+        }
 
         resolve(match) { [weak self] leading, trailing in
             self?.show(match, foundAt: point, leading: leading, trailing: trailing, in: screenFrame)
@@ -444,11 +466,16 @@ class SnapDividerManager {
                 // drag, not once for every position.
                 let restoreEnhancedUI = windows.map { window -> () -> Void in
                     window.element.setMessagingTimeout(Self.resizeTimeout)
+                    // The cap on the window's element does not reach its
+                    // app's, and an app that has stopped answering would
+                    // otherwise hold the end of the drag up for seconds.
+                    let app = AXUIElementCreateApplication(window.info.pid)
+                    AXUIElementSetMessagingTimeout(app, Self.axTimeout)
                     return enhancedUI.beginWindowAdjustment(
-                        bundleIdentifier: window.element.bundleIdentifier,
+                        bundleIdentifier: NSRunningApplication(processIdentifier: window.info.pid)?.bundleIdentifier,
                         builtInAssistiveTechnologyEnabled: assistiveTechnologyEnabled,
-                        readEnhancedUI: { window.element.enhancedUserInterface },
-                        writeEnhancedUI: { window.element.enhancedUserInterface = $0 })
+                        readEnhancedUI: { app.getValue(.enhancedUserInterface) as? Bool },
+                        writeEnhancedUI: { app.setValue(.enhancedUserInterface, $0) })
                 }
                 return {
                     for (window, restore) in zip(windows, restoreEnhancedUI) {
@@ -711,22 +738,31 @@ class SnapDividerManager {
         guard pairSeam.isNear(point, slop: hoverSlop) || seam.isNear(point, slop: hoverSlop) else { return nil }
 
         // Something narrower than the distance between the probes can still
-        // cover the seam, here or further along it. Only windows in front of
-        // one of the seam's own can: whatever shows through a gap from behind
-        // all of them is fine.
+        // cover the seam, here or further along it. A window covers it where
+        // it lies over one of the seam's own windows, close to the seam.
+        // That leaves out whatever shows through a gap from behind all of
+        // them, and a window that is itself behind one of the seam's own
+        // there, such as the rest of a stack of windows in the same place.
         let members = leading + trailing
         let coverReach = seam.gap / 2 + coverMargin
-        let covered = windows[..<(members.max() ?? 0)].enumerated().compactMap { index, info -> ClosedRange<CGFloat>? in
-            let frame = info.frame
-            guard !members.contains(index),
-                  frame.isValidWindowFrame,
-                  frame.minX <= seam.position + coverReach, frame.maxX >= seam.position - coverReach,
+        let strip = CGRect(x: seam.position - coverReach, y: seam.span.lowerBound,
+                           width: coverReach * 2, height: seam.span.upperBound - seam.span.lowerBound)
+        var covered = [ClosedRange<CGFloat>]()
+        for (index, info) in windows[..<(members.max() ?? 0)].enumerated() where !members.contains(index) {
+            let part = info.frame.intersection(strip)
+            guard info.frame.isValidWindowFrame, !part.isNull, part.width > 0,
                   // Asked of the window alone, this is whether it counts as
                   // a window that can be under the cursor at all.
-                  AccessibilityElement.windowInfoUnderCursor(at: frame.centerPoint, windows: [info],
+                  AccessibilityElement.windowInfoUnderCursor(at: info.frame.centerPoint, windows: [info],
                                                              ignoring: ignoredWindows) != nil
-            else { return nil }
-            return frame.minY...frame.maxY
+            else { continue }
+            let nearer = members.filter { $0 < index }.map { windows[$0].frame }
+            for member in members where member > index {
+                let lying = part.intersection(windows[member].frame)
+                guard !lying.isNull, lying.width > 0, lying.height > 0 else { continue }
+                let hidden = nearer.filter { $0.minX <= lying.minX && $0.maxX >= lying.maxX }.map { $0.minY...$0.maxY }
+                covered += SnapDividerGeometry.remainder(of: lying.minY...lying.maxY, without: hidden)
+            }
         }
         guard let clearSpan = SnapDividerGeometry.clearStretch(of: seam.span, around: point.y, blockedBy: covered),
               clearSpan.upperBound - clearSpan.lowerBound >= minimumSpan
