@@ -86,8 +86,12 @@ class SnapDividerManager {
         let gap: CGFloat
         let minimumLeftWidth: CGFloat
         let minimumRightWidth: CGFloat
-        /// Where the two windows go if the mouse comes up now.
+        /// Where the handle now wants the two windows.
         var target: SnapDividerGeometry.Frames
+        /// Applies `target` to the windows as it changes.
+        let session: SnapDividerResizeSession
+        /// Whether the pointer has left the spot where the mouse went down.
+        var hasMoved = false
         var ticksWithoutButton = 0
     }
 
@@ -100,7 +104,8 @@ class SnapDividerManager {
     private var panel: SnapDividerPanel?
     private var shown: Shown?
     private var drag: Drag?
-    /// Set from the mouse coming up until the windows have been resized.
+    /// Set from the mouse coming up until the windows have caught up with
+    /// where the handle was dropped.
     private var isApplying = false
     /// Windows are written here, one resize at a time, so a slow app holds
     /// up neither the handle nor anything else Rectangle is doing.
@@ -155,8 +160,8 @@ class SnapDividerManager {
     }
 
     private func tick() {
-        // While the windows are being resized the handle is left alone; it is
-        // put on the new seam once they have answered.
+        // While the windows catch up after a drag the handle is left alone;
+        // it is put on the new seam once they have answered.
         guard !isApplying else { return }
         if drag != nil {
             checkDrag()
@@ -320,6 +325,7 @@ class SnapDividerManager {
         // Invalidate any lookup in flight so a stale answer cannot bring the
         // handle back after a dismissal.
         generation += 1
+        drag?.session.cancel()
         drag = nil
         guard shown != nil else { return }
         shown = nil
@@ -346,13 +352,15 @@ class SnapDividerManager {
     private func beginDrag() -> Bool {
         guard let shown, drag == nil, !isApplying else { return false }
         let start = SnapDividerGeometry.Frames(left: shown.left.info.frame, right: shown.right.info.frame)
+        let gap = SnapDividerGeometry.intendedGap(distance: start.right.minX - start.left.maxX,
+                                                  configuredGap: Defaults.gapSize.cgFloat,
+                                                  tolerance: Self.edgeTolerance)
         drag = Drag(start: start,
-                    gap: SnapDividerGeometry.intendedGap(distance: start.right.minX - start.left.maxX,
-                                                         configuredGap: Defaults.gapSize.cgFloat,
-                                                         tolerance: Self.edgeTolerance),
+                    gap: gap,
                     minimumLeftWidth: Self.minimumWidth(of: shown.left),
                     minimumRightWidth: Self.minimumWidth(of: shown.right),
-                    target: start)
+                    target: start,
+                    session: makeSession(for: shown, gap: gap))
         return true
     }
 
@@ -363,30 +371,77 @@ class SnapDividerManager {
         min(window.info.frame.width, max(window.minimumSize?.width ?? 0, fallbackMinimumWidth))
     }
 
+    /// What resizes the two windows during a drag: off the main thread, one
+    /// position at a time, and only ever the latest.
+    private func makeSession(for shown: Shown, gap: CGFloat) -> SnapDividerResizeSession {
+        let windows = [shown.left, shown.right]
+        let enhancedUI = Defaults.enhancedUI.value
+        let assistiveTechnologyEnabled = NSWorkspace.shared.isVoiceOverEnabled
+            || NSWorkspace.shared.isSwitchControlEnabled
+        let queue = resizeQueue
+        return SnapDividerResizeSession(
+            left: SnapDividerAXWindow(element: shown.left.element.axElement),
+            right: SnapDividerAXWindow(element: shown.right.element.axElement),
+            gap: gap,
+            work: { queue.async(execute: $0) },
+            begin: {
+                // The same care `AccessibilityElement.setFrame` takes: an app
+                // with enhanced accessibility on animates a resize unless it
+                // is turned off around it. Here that is once around the whole
+                // drag, not once for every position.
+                let restoreEnhancedUI = windows.map { window -> () -> Void in
+                    window.element.setMessagingTimeout(Self.resizeTimeout)
+                    return enhancedUI.beginWindowAdjustment(
+                        bundleIdentifier: window.element.bundleIdentifier,
+                        builtInAssistiveTechnologyEnabled: assistiveTechnologyEnabled,
+                        readEnhancedUI: { window.element.enhancedUserInterface },
+                        writeEnhancedUI: { window.element.enhancedUserInterface = $0 })
+                }
+                return {
+                    for (window, restore) in zip(windows, restoreEnhancedUI) {
+                        restore()
+                        window.element.setMessagingTimeout(Self.axTimeout)
+                    }
+                }
+            })
+    }
+
     /// The handle follows the pointer as far as the windows' minimum widths
-    /// let the seam go. The windows themselves stay put until the mouse comes
-    /// up.
+    /// let the seam go, and the windows follow the handle.
     private func moveDrag(by distance: CGFloat) {
         guard var drag, let shown else { return }
-        drag.target = SnapDividerGeometry.resized(drag.start, gap: drag.gap,
-                                                  minimumLeftWidth: drag.minimumLeftWidth,
-                                                  minimumRightWidth: drag.minimumRightWidth,
-                                                  seamAt: shown.match.seam.position + distance)
+        let target = SnapDividerGeometry.resized(drag.start, gap: drag.gap,
+                                                 minimumLeftWidth: drag.minimumLeftWidth,
+                                                 minimumRightWidth: drag.minimumRightWidth,
+                                                 seamAt: shown.match.seam.position + distance)
+        panel?.movePill(toMinX: (target.seamPosition - SnapDividerPanel.pillThickness / 2).rounded())
+
+        // A press that goes nowhere is not a request to move anything, even
+        // where the gap between the two windows could be tidied up.
+        if abs(distance) >= 1 {
+            drag.hasMoved = true
+        }
+        if drag.hasMoved, target != drag.target {
+            drag.target = target
+            drag.session.request(target)
+        }
         self.drag = drag
-        panel?.movePill(toMinX: (drag.target.seamPosition - SnapDividerPanel.pillThickness / 2).rounded())
     }
 
     private func endDrag(by distance: CGFloat) {
         moveDrag(by: distance)
         guard let drag, let shown else { return }
         self.drag = nil
-        // A press that went nowhere is not a request to move anything, even
-        // where the gap between the two windows could be tidied up.
-        guard abs(distance) >= 1, drag.target != drag.start else {
+        guard drag.hasMoved else {
+            drag.session.cancel()
             panel?.movePill(toMinX: shown.pillFrame.minX)
             return
         }
-        apply(drag, for: shown)
+        // The windows may still be a position or two behind the handle.
+        isApplying = true
+        drag.session.finish { [weak self] outcome in
+            self?.finishApplying(outcome, for: shown)
+        }
     }
 
     /// A drag ends with the mouse coming up on the handle. Should that event
@@ -406,41 +461,17 @@ class SnapDividerManager {
         }
     }
 
-    /// Writes both frames once, off the main thread, then reads back what
-    /// the windows did and corrects it if one of them refused its size.
-    private func apply(_ drag: Drag, for shown: Shown) {
-        isApplying = true
-        let windows = [shown.left, shown.right]
-        let enhancedUI = Defaults.enhancedUI.value
-        let assistiveTechnologyEnabled = NSWorkspace.shared.isVoiceOverEnabled
-            || NSWorkspace.shared.isSwitchControlEnabled
-        resizeQueue.async { [weak self] in
-            // The same care `AccessibilityElement.setFrame` takes: an app with
-            // enhanced accessibility on animates a resize unless it is turned
-            // off around it.
-            let restoreEnhancedUI = windows.map { window -> () -> Void in
-                window.element.setMessagingTimeout(Self.resizeTimeout)
-                return enhancedUI.beginWindowAdjustment(
-                    bundleIdentifier: window.element.bundleIdentifier,
-                    builtInAssistiveTechnologyEnabled: assistiveTechnologyEnabled,
-                    readEnhancedUI: { window.element.enhancedUserInterface },
-                    writeEnhancedUI: { window.element.enhancedUserInterface = $0 })
-            }
-            let outcome = SnapDividerResize.apply(drag.target, gap: drag.gap,
-                                                  left: SnapDividerAXWindow(element: shown.left.element.axElement),
-                                                  right: SnapDividerAXWindow(element: shown.right.element.axElement))
-            for (window, restore) in zip(windows, restoreEnhancedUI) {
-                restore()
-                window.element.setMessagingTimeout(Self.axTimeout)
-            }
-            DispatchQueue.main.async {
-                self?.finishApplying(outcome, for: shown)
-            }
-        }
-    }
-
-    private func finishApplying(_ outcome: SnapDividerResize.Outcome, for shown: Shown) {
+    /// The windows have caught up with where the handle was dropped.
+    /// `outcome` is nil if the drag never asked them to move.
+    private func finishApplying(_ outcome: SnapDividerResize.Outcome?, for shown: Shown) {
         isApplying = false
+        guard let outcome else {
+            if self.shown != nil {
+                panel?.movePill(toMinX: shown.pillFrame.minX)
+            }
+            return
+        }
+
         // The windows are no longer where a Rectangle action put them, just
         // as after resizing one of them by its own edge.
         for window in [shown.left, shown.right] {
@@ -449,7 +480,7 @@ class SnapDividerManager {
 
         if let final = outcome.final {
             var message = "Snap divider: seam moved to x=\(final.seamPosition); window \(shown.left.info.id) is now \(final.left), window \(shown.right.info.id) is now \(final.right)"
-            if outcome.corrected != nil {
+            if outcome.wasRevised {
                 message += " (x=\(outcome.requested.seamPosition) was asked for, but a window chose its own width)"
             }
             Logger.log(message)

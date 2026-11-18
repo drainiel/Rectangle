@@ -138,33 +138,6 @@ enum SnapDividerGeometry {
         return placed(frames, leftWidth: leftEdge - frames.left.minX, gap: gap)
     }
 
-    /// What to ask of the two windows once it is known what they did with
-    /// the frames first asked of them.
-    ///
-    /// An app can refuse a size: it will not go below a minimum it never
-    /// reported, or it only resizes in steps. A window that came out a
-    /// different width than asked keeps the width it chose, and the other
-    /// one takes up the difference, so the two still meet with `gap` between
-    /// them and the pair still spans from the left window's left edge to the
-    /// right window's right edge. If both chose their own width, the left one
-    /// wins and the right one is asked again for what is left over.
-    static func reconciled(requested: Frames, actual: Frames, gap: CGFloat, tolerance: CGFloat = 1) -> Frames {
-        let gap = max(0, gap)
-        let span = requested.right.maxX - requested.left.minX
-        let leftRefused = abs(actual.left.width - requested.left.width) > tolerance
-        let rightRefused = abs(actual.right.width - requested.right.width) > tolerance
-
-        var leftWidth = requested.left.width
-        if leftRefused {
-            leftWidth = actual.left.width
-        } else if rightRefused {
-            leftWidth = span - gap - actual.right.width
-        }
-        // Nothing sensible is left for one of them: stay with what was asked.
-        guard leftWidth >= 1, span - gap - leftWidth >= 1 else { return requested }
-        return placed(requested, leftWidth: leftWidth, gap: gap)
-    }
-
     /// `frames` with the left window `leftWidth` wide and the right one
     /// starting `gap` after it, both far edges unmoved.
     private static func placed(_ frames: Frames, leftWidth: CGFloat, gap: CGFloat) -> Frames {
