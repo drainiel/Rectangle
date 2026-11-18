@@ -21,8 +21,11 @@ class SnapDividerManager {
     /// edge of the zone that summoned it.
     private static let staySlop: CGFloat = 12
     /// A window in front that comes this close to the gap covers the seam.
-    /// At least half the handle's width, so the handle never lands on it.
-    private static let coverMargin: CGFloat = 8
+    /// Never less than half the handle's width, so the handle cannot land on
+    /// such a window however the pill is tuned.
+    private static var coverMargin: CGFloat {
+        max(8, SnapDividerPanel.pillThickness / 2 + SnapDividerPanel.hitPadding)
+    }
     private static let minimumSpan: CGFloat = 100
 
     /// A seam and the two windows that form it.
@@ -216,6 +219,7 @@ class SnapDividerManager {
     /// gone down somewhere else, or the windows are no longer where they
     /// were.
     private func checkShown(_ shown: Shown, cursor location: CGPoint) {
+        panel?.updateCursor()
         let onHandle = panel?.frame.contains(location) == true
         guard panel?.isVisible == true,
               !ApplicationToggle.shortcutsDisabled,
