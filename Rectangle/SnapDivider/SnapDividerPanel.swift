@@ -2,20 +2,20 @@
 
 import Cocoa
 
-/// The handle shown on the seam between two side-by-side windows: a short
-/// pill, centred on the seam, that can be dragged sideways. It takes the
-/// mouse but never the keyboard, and never activates Rectangle, so the app
-/// being worked in keeps its focus.
+/// The handle shown on the seam between windows: a short pill, centred on
+/// the seam, that can be dragged across it. It takes the mouse but never the
+/// keyboard, and never activates Rectangle, so the app being worked in keeps
+/// its focus.
 final class SnapDividerPanel: NSPanel {
 
-    /// How wide the pill is drawn, across the seam.
+    /// How thick the pill is drawn, across the seam.
     static let pillThickness: CGFloat = 8
     /// How much of the visible seam the pill covers.
     static let pillLengthFraction: CGFloat = 1.0 / 3.0
     /// The pill is never shorter than this, unless the seam is.
     static let pillMinimumLength: CGFloat = 48
     /// Invisible margin on either side of the pill that also takes the mouse,
-    /// so the pill is easier to hit than it is wide.
+    /// so the pill is easier to hit than it is thick.
     static let hitPadding: CGFloat = 4
 
     static let pillFillColor = NSColor(white: 0.1, alpha: 0.7)
@@ -57,12 +57,28 @@ final class SnapDividerPanel: NSPanel {
         windowNumber > 0 ? CGWindowID(exactly: windowNumber) : nil
     }
 
+    /// Whether the handle stands upright between windows side by side, or
+    /// lies flat between windows stacked one above the other.
+    private(set) var arrangement = SnapDividerGeometry.Arrangement.sideBySide
+
     /// Shows the handle with its pill at `pillFrame` (AppKit coordinates).
-    func show(pillFrame: CGRect) {
-        setFrame(pillFrame.insetBy(dx: -Self.hitPadding, dy: 0), display: true)
+    func show(pillFrame: CGRect, arrangement: SnapDividerGeometry.Arrangement) {
+        if arrangement != self.arrangement {
+            self.arrangement = arrangement
+            contentView?.needsDisplay = true
+        }
+        setFrame(frame(forPill: pillFrame), display: true)
         orderFrontRegardless()
         BackgroundCursor.setAllowed(true)
         updateCursor()
+    }
+
+    /// The pill and the margin either side of it, across the seam.
+    private func frame(forPill pillFrame: CGRect) -> CGRect {
+        switch arrangement {
+        case .sideBySide: return pillFrame.insetBy(dx: -Self.hitPadding, dy: 0)
+        case .stacked: return pillFrame.insetBy(dx: 0, dy: -Self.hitPadding)
+        }
     }
 
     func hide() {
@@ -83,18 +99,29 @@ final class SnapDividerPanel: NSPanel {
     /// Asked when the mouse goes down on the handle. Returning false leaves
     /// the press without effect.
     var dragShouldBegin: (() -> Bool)?
-    /// Called as the pointer moves during a drag, with how far it now is
-    /// from where the drag began: points, positive to the right.
+    /// Called as the pointer moves during a drag, with how far across the
+    /// seam it now is from where the drag began: points, positive to the
+    /// right, or downwards for a handle that lies flat.
     var dragMoved: ((CGFloat) -> Void)?
     /// Called once when the mouse comes up, with the final distance.
     var dragEnded: ((CGFloat) -> Void)?
 
     private(set) var isDragging = false
-    private var dragStartX: CGFloat = 0
+    private var dragStart = CGPoint.zero
 
-    /// Moves the handle sideways so its pill starts at `pillMinX`.
-    func movePill(toMinX pillMinX: CGFloat) {
-        setFrameOrigin(CGPoint(x: pillMinX - Self.hitPadding, y: frame.minY))
+    /// Moves the handle so its pill is at `pillFrame` (AppKit coordinates).
+    func movePill(to pillFrame: CGRect) {
+        setFrameOrigin(frame(forPill: pillFrame).origin)
+    }
+
+    /// How far the pointer is from where the drag began, across the seam.
+    /// AppKit's y runs upwards and the seam is worked out with y downwards.
+    private var dragDistance: CGFloat {
+        let location = NSEvent.mouseLocation
+        switch arrangement {
+        case .sideBySide: return location.x - dragStart.x
+        case .stacked: return dragStart.y - location.y
+        }
     }
 
     /// Whether a mouse event landed on a snap divider handle. Such a press
@@ -112,30 +139,38 @@ final class SnapDividerPanel: NSPanel {
     fileprivate func mouseWentDown() {
         guard !isDragging, dragShouldBegin?() == true else { return }
         isDragging = true
-        dragStartX = NSEvent.mouseLocation.x
+        dragStart = NSEvent.mouseLocation
         updateCursor()
     }
 
     fileprivate func mouseWasDragged() {
         guard isDragging else { return }
-        dragMoved?(NSEvent.mouseLocation.x - dragStartX)
+        dragMoved?(dragDistance)
         updateCursor()
     }
 
     fileprivate func mouseCameUp() {
         guard isDragging else { return }
         isDragging = false
-        dragEnded?(NSEvent.mouseLocation.x - dragStartX)
+        dragEnded?(dragDistance)
         updateCursor()
     }
 
     // MARK: Cursor
 
-    private static var resizeCursor: NSCursor {
-        if #available(macOS 15.0, *) {
-            return .columnResize
+    private var resizeCursor: NSCursor {
+        switch arrangement {
+        case .sideBySide:
+            if #available(macOS 15.0, *) {
+                return .columnResize
+            }
+            return .resizeLeftRight
+        case .stacked:
+            if #available(macOS 15.0, *) {
+                return .rowResize
+            }
+            return .resizeUpDown
         }
-        return .resizeLeftRight
     }
 
     /// How often, and how many times, the cursor is set again after the
@@ -198,7 +233,7 @@ final class SnapDividerPanel: NSPanel {
     func updateCursor() {
         let onHandle = isVisible && (isDragging || frame.contains(NSEvent.mouseLocation))
         if onHandle {
-            Self.resizeCursor.set()
+            resizeCursor.set()
         } else if pointerIsOnHandle {
             takeDownCursor()
         }
@@ -209,7 +244,7 @@ final class SnapDividerPanel: NSPanel {
     /// resets a cursor it set itself. But where the pointer went, another app
     /// may already have put its own cursor up, and that one has to stay.
     private func takeDownCursor() {
-        if let showing = NSCursor.currentSystem, !Self.resizeCursor.hasSameShape(as: showing) {
+        if let showing = NSCursor.currentSystem, !resizeCursor.hasSameShape(as: showing) {
             return
         }
         NSCursor.arrow.set()
@@ -313,7 +348,11 @@ private final class SnapDividerHandleView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let border: CGFloat = 1
-        let pill = bounds.insetBy(dx: SnapDividerPanel.hitPadding + border / 2, dy: border / 2)
+        // The margin is across the seam: at the sides of an upright pill,
+        // above and below one that lies flat.
+        let upright = panel?.arrangement != .stacked
+        let pill = bounds.insetBy(dx: (upright ? SnapDividerPanel.hitPadding : 0) + border / 2,
+                                  dy: (upright ? 0 : SnapDividerPanel.hitPadding) + border / 2)
         guard pill.width > 0, pill.height > 0 else { return }
         let radius = min(pill.width, pill.height) / 2
         let path = NSBezierPath(roundedRect: pill, xRadius: radius, yRadius: radius)

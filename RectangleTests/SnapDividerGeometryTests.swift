@@ -4,6 +4,38 @@ import XCTest
 import CoreGraphics
 @testable import Rectangle
 
+// Most of these tests are about one window either side of a seam, so they
+// speak of a left and a right window. The types themselves take any number.
+private extension SnapDividerGeometry.Frames {
+    init(left: CGRect, right: CGRect) {
+        self.init(leading: [left], trailing: [right])
+    }
+
+    var left: CGRect { leading[0] }
+    var right: CGRect { trailing[0] }
+}
+
+private extension SnapDividerGeometry {
+    static func resized(_ frames: Frames, gap: CGFloat, minimumLeftWidth: CGFloat, minimumRightWidth: CGFloat,
+                        seamAt position: CGFloat) -> Frames {
+        resized(frames, gap: gap, minimumLeadingWidths: [minimumLeftWidth],
+                minimumTrailingWidths: [minimumRightWidth], seamAt: position)
+    }
+}
+
+private extension SnapDividerResize {
+    static func apply(_ target: SnapDividerGeometry.Frames, gap: CGFloat,
+                      left: SnapDividerWindow, right: SnapDividerWindow,
+                      from known: SnapDividerGeometry.Frames? = nil, cautious: Bool = false) -> Outcome {
+        apply(target, gap: gap, leading: [left], trailing: [right], from: known, cautious: cautious)
+    }
+}
+
+private extension SnapDividerManager.Match {
+    var left: WindowInfo { leading[0] }
+    var right: WindowInfo { trailing[0] }
+}
+
 final class SnapDividerGeometryTests: XCTestCase {
     /// Two halves of a 1440 x 875 visible area below a 25 pt menu bar.
     private let leftHalf = CGRect(x: 0, y: 25, width: 720, height: 875)
@@ -685,7 +717,7 @@ final class SnapDividerResizeSessionTests: XCTestCase {
     private var events = [String]()
 
     private func session() -> SnapDividerResizeSession {
-        SnapDividerResizeSession(left: left, right: right, gap: 0,
+        SnapDividerResizeSession(leading: [left], trailing: [right], gap: 0,
                                  work: { self.work.append($0) },
                                  reply: { self.replies.append($0) },
                                  begin: {
@@ -809,3 +841,310 @@ final class SnapDividerResizeSessionTests: XCTestCase {
         XCTAssertEqual(calls.made, [])
     }
 }
+
+final class SnapDividerArrangementTests: XCTestCase {
+    private typealias Frames = SnapDividerGeometry.Frames
+    private let stacked = SnapDividerGeometry.Arrangement.stacked
+    private let sideBySide = SnapDividerGeometry.Arrangement.sideBySide
+
+    private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    private let topHalf = CGRect(x: 0, y: 25, width: 1440, height: 437)
+    private let bottomHalf = CGRect(x: 0, y: 462, width: 1440, height: 438)
+
+    private func window(_ id: CGWindowID, _ frame: CGRect) -> WindowInfo {
+        WindowInfo(id: id, level: kCGNormalWindowLevel, frame: frame, pid: pid_t(id), processName: "App \(id)", alpha: 1)
+    }
+
+    private func match(_ windows: [WindowInfo], at point: CGPoint, _ arrangement: SnapDividerGeometry.Arrangement,
+                       in screenFrame: CGRect? = nil, gap: CGFloat = 0) -> SnapDividerManager.Match? {
+        SnapDividerManager.match(at: point, in: screenFrame ?? screen, windows: windows,
+                                 configuredGap: gap, arrangement: arrangement)
+    }
+
+    func testStackedGeometryChangesXAndYRoundAndBackAgain() {
+        let rect = CGRect(x: 10, y: 20, width: 300, height: 400)
+
+        XCTAssertEqual(stacked.canonical(rect), CGRect(x: 20, y: 10, width: 400, height: 300))
+        XCTAssertEqual(stacked.canonical(stacked.canonical(rect)), rect)
+        XCTAssertEqual(stacked.canonical(CGPoint(x: 1, y: 2)), CGPoint(x: 2, y: 1))
+        XCTAssertEqual(stacked.canonical(CGSize(width: 1, height: 2)), CGSize(width: 2, height: 1))
+        XCTAssertEqual(sideBySide.canonical(rect), rect)
+        XCTAssertTrue(stacked.canonical(CGRect.null).isNull)
+    }
+
+    func testWindowsOneAboveTheOtherFormAStackedSeam() {
+        let windows = [window(1, topHalf), window(2, bottomHalf)]
+        let onSeam = CGPoint(x: 700, y: 462)
+
+        let match = match(windows, at: onSeam, stacked)
+
+        XCTAssertEqual(match?.leading.map { $0.id }, [1], "The window above")
+        XCTAssertEqual(match?.trailing.map { $0.id }, [2], "The window below")
+        XCTAssertEqual(match?.seam.position, 462, "How far down the seam is")
+        XCTAssertEqual(match?.seam.span, 0...1440, "The seam runs the width of both")
+        XCTAssertNil(self.match(windows, at: onSeam, sideBySide), "They are not side by side")
+    }
+
+    func testWindowsSideBySideAreNotAStackedSeam() {
+        let windows = [window(1, CGRect(x: 0, y: 25, width: 720, height: 875)),
+                       window(2, CGRect(x: 720, y: 25, width: 720, height: 875))]
+
+        XCTAssertNil(match(windows, at: CGPoint(x: 720, y: 400), stacked))
+        XCTAssertNotNil(match(windows, at: CGPoint(x: 720, y: 400), sideBySide))
+    }
+
+    func testStackedSeamAllowsForATerminalThatStoppedARowShort() {
+        let shortTop = CGRect(x: 0, y: 25, width: 1440, height: 420)
+        let windows = [window(1, shortTop), window(2, bottomHalf)]
+
+        let match = match(windows, at: CGPoint(x: 700, y: 453), stacked)
+
+        XCTAssertEqual(match?.seam.gap, 17)
+        XCTAssertEqual(match?.seam.position, 453.5)
+    }
+
+    func testWindowsOnDisplaysOneAboveTheOtherDoNotMatch() {
+        let upper = CGRect(x: 0, y: -900, width: 1440, height: 900)
+        let windows = [window(1, CGRect(x: 0, y: -400, width: 1440, height: 400)),
+                       window(2, CGRect(x: 0, y: 0, width: 1440, height: 450))]
+        let boundary = CGPoint(x: 700, y: 0)
+
+        XCTAssertNil(match(windows, at: boundary, stacked, in: screen))
+        XCTAssertNil(match(windows, at: boundary, stacked, in: upper))
+    }
+
+    func testStackedSeamOnADisplayAboveTheMainOneMatches() {
+        let upper = CGRect(x: 200, y: -1080, width: 1920, height: 1080)
+        let windows = [window(1, CGRect(x: 200, y: -1055, width: 1920, height: 527)),
+                       window(2, CGRect(x: 200, y: -528, width: 1920, height: 528))]
+
+        XCTAssertEqual(match(windows, at: CGPoint(x: 900, y: -528), stacked, in: upper)?.seam.position, -528)
+    }
+
+    func testMovingAStackedSeamChangesHeightsOnly() {
+        let calls = FakeDividerWindow.Calls()
+        let top = FakeDividerWindow("top", topHalf, calls: calls)
+        let bottom = FakeDividerWindow("bottom", bottomHalf, calls: calls)
+        let start = Frames(leading: [stacked.canonical(topHalf)], trailing: [stacked.canonical(bottomHalf)])
+        let target = SnapDividerGeometry.resized(start, gap: 0, minimumLeadingWidths: [100],
+                                                 minimumTrailingWidths: [100], seamAt: 300)
+
+        let outcome = SnapDividerResize.apply(target, gap: 0,
+                                              leading: [SnapDividerTransposedWindow(window: top)],
+                                              trailing: [SnapDividerTransposedWindow(window: bottom)])
+
+        XCTAssertEqual(top.frame, CGRect(x: 0, y: 25, width: 1440, height: 275))
+        XCTAssertEqual(bottom.frame, CGRect(x: 0, y: 300, width: 1440, height: 600))
+        XCTAssertEqual(outcome.final.map { stacked.canonical($0.trailing[0]) }, bottom.frame)
+    }
+}
+
+final class SnapDividerGroupTests: XCTestCase {
+    private typealias Frames = SnapDividerGeometry.Frames
+
+    private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    private let leftHalf = CGRect(x: 0, y: 25, width: 720, height: 875)
+    private let topRight = CGRect(x: 720, y: 25, width: 720, height: 437)
+    private let bottomRight = CGRect(x: 720, y: 462, width: 720, height: 438)
+    private let topLeft = CGRect(x: 0, y: 25, width: 720, height: 437)
+    private let bottomLeft = CGRect(x: 0, y: 462, width: 720, height: 438)
+
+    private func window(_ id: CGWindowID, _ frame: CGRect) -> WindowInfo {
+        WindowInfo(id: id, level: kCGNormalWindowLevel, frame: frame, pid: pid_t(id), processName: "App \(id)", alpha: 1)
+    }
+
+    private func match(_ windows: [WindowInfo], at point: CGPoint, gap: CGFloat = 0,
+                       _ arrangement: SnapDividerGeometry.Arrangement = .sideBySide) -> SnapDividerManager.Match? {
+        SnapDividerManager.match(at: point, in: screen, windows: windows, configuredGap: gap, arrangement: arrangement)
+    }
+
+    func testLeftHalfFacingTwoRightQuartersIsOneSeamOfThreeWindows() {
+        let windows = [window(1, leftHalf), window(2, topRight), window(3, bottomRight)]
+
+        let match = match(windows, at: CGPoint(x: 720, y: 200))
+
+        XCTAssertEqual(match?.leading.map { $0.id }, [1])
+        XCTAssertEqual(match?.trailing.map { $0.id }, [2, 3], "In order down the seam")
+        XCTAssertEqual(match?.seam.span, 25...900, "The seam runs the whole height of the half")
+        XCTAssertEqual(match?.clearSpan, 25...900)
+    }
+
+    func testTheSameSeamIsFoundBesideEitherQuarter() {
+        let windows = [window(3, bottomRight), window(1, leftHalf), window(2, topRight)]
+
+        let besideTop = match(windows, at: CGPoint(x: 720, y: 200))
+        let besideBottom = match(windows, at: CGPoint(x: 720, y: 700))
+
+        XCTAssertNotNil(besideTop)
+        XCTAssertEqual(besideBottom.map { besideTop?.isSame(as: $0) }, true)
+    }
+
+    func testQuartersWithGapsBetweenThemStillFormOneSeam() {
+        let windows = [window(1, CGRect(x: 20, y: 45, width: 690, height: 835)),
+                       window(2, CGRect(x: 730, y: 45, width: 690, height: 407)),
+                       window(3, CGRect(x: 730, y: 472, width: 690, height: 408))]
+
+        let match = match(windows, at: CGPoint(x: 720, y: 200), gap: 20)
+
+        XCTAssertEqual(match?.trailing.map { $0.id }, [2, 3])
+        XCTAssertEqual(match?.seam.gap, 20)
+        XCTAssertEqual(match?.seam.span, 45...880)
+    }
+
+    func testSeamIsLookedUpAgainLevelWithWhereItWasFound() {
+        // The middle of the seam is level with the space between the two
+        // quarters, where there is no window on the right to find.
+        let windows = [window(1, CGRect(x: 20, y: 45, width: 690, height: 835)),
+                       window(2, CGRect(x: 730, y: 45, width: 690, height: 407)),
+                       window(3, CGRect(x: 730, y: 472, width: 690, height: 408))]
+        let found = match(windows, at: CGPoint(x: 716, y: 200), gap: 20)
+
+        XCTAssertNil(match(windows, at: CGPoint(x: 720, y: 462), gap: 20))
+        XCTAssertEqual(match(windows, at: CGPoint(x: 720, y: 200), gap: 20).map { found?.isSame(as: $0) }, true)
+    }
+
+    func testTwoLeftQuartersFacingARightHalf() {
+        let windows = [window(1, topLeft), window(2, bottomLeft), window(3, CGRect(x: 720, y: 25, width: 720, height: 875))]
+
+        let match = match(windows, at: CGPoint(x: 720, y: 700))
+
+        XCTAssertEqual(match?.leading.map { $0.id }, [1, 2])
+        XCTAssertEqual(match?.trailing.map { $0.id }, [3])
+    }
+
+    func testFourQuartersAreTwoSeamsOfTwoWindowsEach() {
+        let windows = [window(1, topLeft), window(2, bottomLeft), window(3, topRight), window(4, bottomRight)]
+
+        let upper = match(windows, at: CGPoint(x: 720, y: 200))
+        let lower = match(windows, at: CGPoint(x: 720, y: 700))
+
+        XCTAssertEqual(upper?.leading.map { $0.id }, [1])
+        XCTAssertEqual(upper?.trailing.map { $0.id }, [3])
+        XCTAssertEqual(lower?.leading.map { $0.id }, [2])
+        XCTAssertEqual(lower?.trailing.map { $0.id }, [4])
+    }
+
+    func testWindowThatIsNotOnTheLineIsLeftOut() {
+        let offLine = CGRect(x: 760, y: 462, width: 680, height: 438)
+        let windows = [window(1, leftHalf), window(2, topRight), window(3, offLine)]
+
+        let match = match(windows, at: CGPoint(x: 720, y: 200))
+
+        XCTAssertEqual(match?.trailing.map { $0.id }, [2])
+        XCTAssertEqual(match?.seam.span, 25...462)
+    }
+
+    func testWindowThatDoesNotFollowStraightOnIsLeftOut() {
+        let further = CGRect(x: 720, y: 562, width: 720, height: 338)
+        let windows = [window(1, leftHalf), window(2, topRight), window(3, further)]
+
+        XCTAssertEqual(match(windows, at: CGPoint(x: 720, y: 200))?.trailing.map { $0.id }, [2])
+    }
+
+    func testCoveredQuarterIsLeftOut() {
+        let cover = window(9, CGRect(x: 600, y: 462, width: 840, height: 438))
+        let windows = [cover, window(1, leftHalf), window(2, topRight), window(3, bottomRight)]
+
+        let match = match(windows, at: CGPoint(x: 720, y: 200))
+
+        XCTAssertEqual(match?.trailing.map { $0.id }, [2])
+        XCTAssertEqual(match?.clearSpan, 25...462)
+    }
+
+    func testTopHalfAboveTwoBottomQuartersIsOneStackedSeam() {
+        let windows = [window(1, CGRect(x: 0, y: 25, width: 1440, height: 437)),
+                       window(2, CGRect(x: 0, y: 462, width: 720, height: 438)),
+                       window(3, CGRect(x: 720, y: 462, width: 720, height: 438))]
+
+        let match = match(windows, at: CGPoint(x: 1000, y: 462), .stacked)
+
+        XCTAssertEqual(match?.leading.map { $0.id }, [1])
+        XCTAssertEqual(match?.trailing.map { $0.id }, [2, 3], "In order along the seam, left to right")
+        XCTAssertEqual(match?.seam.span, 0...1440)
+    }
+
+    // MARK: Moving a seam of several windows
+
+    private func frames() -> Frames {
+        Frames(leading: [leftHalf], trailing: [topRight, bottomRight])
+    }
+
+    func testMovingTheSeamMovesEveryWindowOnIt() {
+        let moved = SnapDividerGeometry.resized(frames(), gap: 0, minimumLeadingWidths: [150],
+                                                minimumTrailingWidths: [150, 150], seamAt: 600)
+
+        XCTAssertEqual(moved.leading, [CGRect(x: 0, y: 25, width: 600, height: 875)])
+        XCTAssertEqual(moved.trailing, [CGRect(x: 600, y: 25, width: 840, height: 437),
+                                        CGRect(x: 600, y: 462, width: 840, height: 438)])
+    }
+
+    func testSeamStopsAtTheLargestMinimumOnASide() {
+        let moved = SnapDividerGeometry.resized(frames(), gap: 0, minimumLeadingWidths: [150],
+                                                minimumTrailingWidths: [300, 500], seamAt: 1400)
+
+        XCTAssertEqual(moved.seamPosition, 940)
+        XCTAssertEqual(moved.trailing.map { $0.width }, [500, 500])
+    }
+
+    func testWindowsOnOneSideKeepTheirOwnOuterEdges() {
+        let uneven = Frames(leading: [CGRect(x: 0, y: 25, width: 720, height: 437),
+                                      CGRect(x: 240, y: 462, width: 480, height: 438)],
+                            trailing: [CGRect(x: 720, y: 25, width: 720, height: 875)])
+
+        let moved = SnapDividerGeometry.resized(uneven, gap: 0, minimumLeadingWidths: [150, 150],
+                                                minimumTrailingWidths: [150], seamAt: 800)
+
+        XCTAssertEqual(moved.leading, [CGRect(x: 0, y: 25, width: 800, height: 437),
+                                       CGRect(x: 240, y: 462, width: 560, height: 438)])
+    }
+
+    func testResizingMovesAllThreeWindowsToTheSameLine() {
+        let calls = FakeDividerWindow.Calls()
+        let left = FakeDividerWindow("left", leftHalf, calls: calls)
+        let top = FakeDividerWindow("top", topRight, calls: calls)
+        let bottom = FakeDividerWindow("bottom", bottomRight, calls: calls)
+        let target = SnapDividerGeometry.resized(frames(), gap: 0, minimumLeadingWidths: [150],
+                                                 minimumTrailingWidths: [150, 150], seamAt: 600)
+
+        let outcome = SnapDividerResize.apply(target, gap: 0, leading: [left], trailing: [top, bottom])
+
+        XCTAssertEqual(outcome.final, target)
+        XCTAssertFalse(outcome.wasRevised)
+        XCTAssertEqual(calls.made, ["top size", "top position", "bottom size", "bottom position", "left size"],
+                       "The side that grows goes first")
+    }
+
+    func testWhenOneWindowWillNotShrinkTheOthersEndOnItsLine() {
+        let calls = FakeDividerWindow.Calls()
+        let left = FakeDividerWindow("left", leftHalf, calls: calls)
+        let top = FakeDividerWindow("top", topRight, calls: calls) { max($0, 600) }
+        let bottom = FakeDividerWindow("bottom", bottomRight, calls: calls)
+        let target = SnapDividerGeometry.resized(frames(), gap: 0, minimumLeadingWidths: [150],
+                                                 minimumTrailingWidths: [150, 150], seamAt: 1200)
+
+        let outcome = SnapDividerResize.apply(target, gap: 0, leading: [left], trailing: [top, bottom])
+
+        XCTAssertEqual(outcome.final?.leading, [CGRect(x: 0, y: 25, width: 840, height: 875)])
+        XCTAssertEqual(outcome.final?.trailing, [CGRect(x: 840, y: 25, width: 600, height: 437),
+                                                 CGRect(x: 840, y: 462, width: 600, height: 438)],
+                       "The quarter that could have shrunk further comes back to the one that could not")
+        XCTAssertTrue(outcome.wasRevised)
+    }
+
+    func testCautiouslyNoWindowIsGrownOverOneThatWillNotShrink() {
+        let calls = FakeDividerWindow.Calls()
+        let left = FakeDividerWindow("left", leftHalf, calls: calls)
+        let top = FakeDividerWindow("top", topRight, calls: calls) { max($0, 600) }
+        let bottom = FakeDividerWindow("bottom", bottomRight, calls: calls)
+        left.neighbour = top
+        let target = SnapDividerGeometry.resized(frames(), gap: 0, minimumLeadingWidths: [150],
+                                                 minimumTrailingWidths: [150, 150], seamAt: 1200)
+
+        let outcome = SnapDividerResize.apply(target, gap: 0, leading: [left], trailing: [top, bottom], cautious: true)
+
+        XCTAssertEqual(outcome.final?.seamPosition, 840)
+        XCTAssertEqual(left.widthsAsked, [840])
+        XCTAssertEqual(left.worstOverlap, 0)
+    }
+}
+

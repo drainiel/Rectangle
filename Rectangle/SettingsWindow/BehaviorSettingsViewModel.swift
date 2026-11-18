@@ -140,6 +140,12 @@ final class BehaviorSettingsViewModel {
     var stackSameSizeOnly: Bool {
         didSet { Defaults.stackSameSizeOnly.enabled = stackSameSizeOnly }
     }
+    var snapDivider: Bool {
+        didSet {
+            Defaults.snapDivider.enabled = snapDivider
+            Notification.Name.snapDividerChanged.post()
+        }
+    }
     /// Mirrors the App Settings restriction toggle, so the window action
     /// recorders here pick up a change made while Settings is open.
     var allowAnyShortcut = Defaults.allowAnyShortcut.enabled
@@ -218,6 +224,7 @@ final class BehaviorSettingsViewModel {
         self.cyclingOverlapOffset = Defaults.cyclingOverlapOffset.userEnabled
         self.stackBadge = Defaults.stackBadge.userEnabled
         self.stackSameSizeOnly = Defaults.stackSameSizeOnly.userEnabled
+        self.snapDivider = Defaults.snapDivider.enabled
         self.horizontalSplitRatio = hRatio
         self.verticalSplitRatio = vRatio
         self.halvesPreserveOtherAxisSize = Defaults.halvesPreserveOtherAxisSize.enabled
@@ -280,6 +287,7 @@ final class BehaviorSettingsViewModel {
         self.cyclingOverlapOffset = Defaults.cyclingOverlapOffset.userEnabled
         self.stackBadge = Defaults.stackBadge.userEnabled
         self.stackSameSizeOnly = Defaults.stackSameSizeOnly.userEnabled
+        self.snapDivider = Defaults.snapDivider.enabled
         self.allowAnyShortcut = Defaults.allowAnyShortcut.enabled
         self.horizontalSplitRatio = hRatio
         self.verticalSplitRatio = vRatio

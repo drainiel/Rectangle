@@ -3,11 +3,41 @@
 import Foundation
 
 /// Pure geometry for the snap divider: whether two window frames meet along a
-/// shared edge, whether a point is resting on that edge, and where the two
+/// shared edge, whether a point is resting on that edge, and where the
 /// frames go when the edge is moved.
 /// No AppKit, no AX - computable from frames alone. Frames and points use the
 /// window list's coordinates (top-left origin, y down).
+///
+/// Everything is worked out for windows side by side, with a vertical seam
+/// between them. Windows stacked one above the other are the same problem
+/// with x and y changed round, and `Arrangement` does the changing on the way
+/// in and on the way out.
 enum SnapDividerGeometry {
+
+    /// How the windows on a seam lie.
+    enum Arrangement: Equatable {
+        /// Left and right of a vertical seam, which is dragged sideways.
+        case sideBySide
+        /// Above and below a horizontal seam, which is dragged up and down.
+        case stacked
+
+        /// Takes a frame to the side-by-side geometry everything here is
+        /// worked out in, or back from it: for stacked windows x and y change
+        /// places, so that left stands for above and right for below. Doing
+        /// it twice gives the original.
+        func canonical(_ rect: CGRect) -> CGRect {
+            guard self == .stacked, !rect.isNull else { return rect }
+            return CGRect(x: rect.origin.y, y: rect.origin.x, width: rect.size.height, height: rect.size.width)
+        }
+
+        func canonical(_ point: CGPoint) -> CGPoint {
+            self == .stacked ? CGPoint(x: point.y, y: point.x) : point
+        }
+
+        func canonical(_ size: CGSize) -> CGSize {
+            self == .stacked ? CGSize(width: size.height, height: size.width) : size
+        }
+    }
 
     /// The shared edge between a window and the window to its right.
     struct Seam: Equatable {
@@ -96,13 +126,20 @@ enum SnapDividerGeometry {
 
     // MARK: Moving the seam
 
-    /// The frames of the two windows on a seam.
+    /// The frames of the windows on a seam: the ones to its left, whose right
+    /// edges it moves, and the ones to its right. Usually one of each. There
+    /// are more where several windows line up along one side, such as a left
+    /// half facing two right quarters.
     struct Frames: Equatable {
-        var left: CGRect
-        var right: CGRect
+        var leading: [CGRect]
+        var trailing: [CGRect]
 
-        /// The middle of the space between the two.
-        var seamPosition: CGFloat { (left.maxX + right.minX) / 2 }
+        /// How far right the windows on the left reach.
+        var leadingEdge: CGFloat { leading.map { $0.maxX }.max() ?? 0 }
+        /// Where the windows on the right begin.
+        var trailingEdge: CGFloat { trailing.map { $0.minX }.min() ?? 0 }
+        /// The middle of the space between the two sides.
+        var seamPosition: CGFloat { (leadingEdge + trailingEdge) / 2 }
     }
 
     /// The gap a moved seam should leave between the two windows, given how
@@ -117,34 +154,37 @@ enum SnapDividerGeometry {
         return abs(distance - configuredGap) <= tolerance ? configuredGap : max(0, distance)
     }
 
-    /// The two frames after the seam between them is moved to `position`,
-    /// the middle of the gap. The left window's left edge and the right
-    /// window's right edge stay where they are, as does everything vertical.
+    /// The frames after the seam is moved to `position`, the middle of the
+    /// gap. Every window keeps its outer edge - the left edge for those on
+    /// the left, the right edge for those on the right - and everything
+    /// vertical.
     ///
     /// The seam goes no further than leaves each window its minimum width.
-    /// If the two minimums do not fit side by side, nothing moves. The facing
+    /// If the minimums do not fit side by side, nothing moves. The facing
     /// edges land on whole points.
     static func resized(_ frames: Frames, gap: CGFloat,
-                        minimumLeftWidth: CGFloat, minimumRightWidth: CGFloat,
+                        minimumLeadingWidths: [CGFloat], minimumTrailingWidths: [CGFloat],
                         seamAt position: CGFloat) -> Frames {
         let gap = max(0, gap)
-        let lowest = frames.left.minX + max(1, minimumLeftWidth)
-        let highest = frames.right.maxX - max(1, minimumRightWidth) - gap
-        guard frames.left.isValidWindowFrame, frames.right.isValidWindowFrame,
-              position.isFinite, lowest <= highest
+        guard frames.leading.count == minimumLeadingWidths.count,
+              frames.trailing.count == minimumTrailingWidths.count,
+              (frames.leading + frames.trailing).allSatisfy({ $0.isValidWindowFrame }),
+              position.isFinite,
+              let lowest = zip(frames.leading, minimumLeadingWidths).map({ $0.minX + max(1, $1) }).max(),
+              let highest = zip(frames.trailing, minimumTrailingWidths).map({ $0.maxX - max(1, $1) - gap }).min(),
+              lowest <= highest
         else { return frames }
 
-        let leftEdge = min(max((position - gap / 2).rounded(), lowest), highest)
-        return placed(frames, leftWidth: leftEdge - frames.left.minX, gap: gap)
-    }
-
-    /// `frames` with the left window `leftWidth` wide and the right one
-    /// starting `gap` after it, both far edges unmoved.
-    private static func placed(_ frames: Frames, leftWidth: CGFloat, gap: CGFloat) -> Frames {
-        var placed = frames
-        placed.left.size.width = leftWidth
-        placed.right.origin.x = frames.left.minX + leftWidth + gap
-        placed.right.size.width = frames.right.maxX - placed.right.origin.x
-        return placed
+        let leadingEdge = min(max((position - gap / 2).rounded(), lowest), highest)
+        var resized = frames
+        for index in resized.leading.indices {
+            resized.leading[index].size.width = leadingEdge - resized.leading[index].minX
+        }
+        for index in resized.trailing.indices {
+            let farEdge = resized.trailing[index].maxX
+            resized.trailing[index].origin.x = leadingEdge + gap
+            resized.trailing[index].size.width = farEdge - (leadingEdge + gap)
+        }
+        return resized
     }
 }

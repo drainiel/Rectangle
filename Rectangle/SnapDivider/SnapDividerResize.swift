@@ -2,7 +2,7 @@
 
 import Cocoa
 
-/// One of the two windows on a seam, as far as resizing it goes. Every call
+/// One of the windows on a seam, as far as resizing it goes. Every call
 /// goes to the window's app and blocks until the app has answered.
 protocol SnapDividerWindow {
     /// Where the window is now, or nil if its app did not say.
@@ -36,7 +36,26 @@ struct SnapDividerAXWindow: SnapDividerWindow {
     }
 }
 
-/// Moves the seam between two real windows.
+/// A window seen with x and y changed round, which makes two windows stacked
+/// one above the other look like two side by side. See
+/// `SnapDividerGeometry.Arrangement`.
+struct SnapDividerTransposedWindow: SnapDividerWindow {
+    let window: SnapDividerWindow
+
+    var frame: CGRect? {
+        window.frame.map { SnapDividerGeometry.Arrangement.stacked.canonical($0) }
+    }
+
+    func setPosition(_ position: CGPoint) {
+        window.setPosition(SnapDividerGeometry.Arrangement.stacked.canonical(position))
+    }
+
+    func setSize(_ size: CGSize) {
+        window.setSize(SnapDividerGeometry.Arrangement.stacked.canonical(size))
+    }
+}
+
+/// Moves the seam between real windows.
 enum SnapDividerResize {
 
     struct Outcome {
@@ -49,68 +68,78 @@ enum SnapDividerResize {
         /// so that the seam is not where it was put.
         var wasRevised: Bool {
             guard let final else { return false }
-            return abs(final.left.width - requested.left.width) > tolerance
-                || abs(final.right.width - requested.right.width) > tolerance
+            return zip(final.leading + final.trailing, requested.leading + requested.trailing).contains {
+                abs($0.width - $1.width) > tolerance
+            }
         }
     }
 
     /// Frames this close are the same frame: nothing is written for less.
     static let tolerance: CGFloat = 1
 
-    /// Resizes the two windows towards `target`, so that they end with `gap`
-    /// between them, no overlap and no stray space. The left window keeps
-    /// its left edge and the right window its right edge. Nothing vertical is
-    /// touched.
+    /// Resizes the windows towards `target`, so that the two sides end with
+    /// `gap` between them, no overlap and no stray space. Each window keeps
+    /// its outer edge: the left edge for those on the left of the seam, the
+    /// right edge for those on the right. Nothing vertical is touched.
     ///
     /// An app can refuse a size: it will not go below a minimum it never
-    /// reported, or it only resizes in steps. So the windows are asked one
-    /// after the other, and the second is asked for what the first left. If
-    /// it does not take exactly that, the first is asked once more, for what
-    /// the second left.
+    /// reported, or it only resizes in steps. So the two sides are asked one
+    /// after the other, and what the first side did decides where the second
+    /// is asked to meet it. A window that would not shrink holds the seam
+    /// where it stopped, and one that grew less than asked draws the seam
+    /// back to itself. Whenever the seam has had to move, both sides are
+    /// gone over again, so that every window ends on the same line.
     ///
-    /// Which goes first is a matter of what shows on the way. Normally it is
-    /// the window that grows: for a moment it lies over the edge of the one
-    /// about to shrink, which cannot be seen, where the other order opens a
-    /// strip of desktop between the two at every step. With `cautious` it is
-    /// the window that gives up space, and the other only gets what was
-    /// really given up. That is the order to use once a window has refused a
-    /// size, because a window growing over a neighbour that will not shrink
-    /// has to be pulled back again each time.
+    /// Which side goes first is a matter of what shows on the way. Normally
+    /// it is the side that grows: for a moment it lies over the edge of the
+    /// side about to shrink, which cannot be seen, where the other order
+    /// opens a strip of desktop between the two at every step. With
+    /// `cautious` it is the side that gives up space, and the other only gets
+    /// what was really given up. That is the order to use once a window has
+    /// refused a size, because a window growing over a neighbour that will
+    /// not shrink has to be pulled back again each time.
     ///
     /// `known` is where the windows were last read, which saves reading them
     /// again when one resize follows another.
     static func apply(_ target: SnapDividerGeometry.Frames, gap: CGFloat,
-                      left: SnapDividerWindow, right: SnapDividerWindow,
+                      leading: [SnapDividerWindow], trailing: [SnapDividerWindow],
                       from known: SnapDividerGeometry.Frames? = nil,
                       cautious: Bool = false) -> Outcome {
-        guard var current = known ?? read(left, right) else {
-            return Outcome(requested: target, final: nil)
-        }
+        let unreadable = Outcome(requested: target, final: nil)
+        guard !leading.isEmpty, !trailing.isEmpty,
+              leading.count == target.leading.count, trailing.count == target.trailing.count,
+              var current = known ?? read(leading, trailing),
+              current.leading.count == leading.count, current.trailing.count == trailing.count
+        else { return unreadable }
         let gap = max(0, gap)
-        let leftEdge = target.left.minX
-        let rightEdge = target.right.maxX
-        /// The width the two windows have to share.
-        let room = rightEdge - leftEdge - gap
+        /// Where the windows on the left are to end. Those on the right
+        /// begin `gap` after it.
+        var line = target.leadingEdge
 
-        /// Asks the left window for a width. False if it could not be read
-        /// back afterwards.
-        func resizeLeft(to width: CGFloat) -> Bool {
+        /// Puts the right edge of a window on the left of the seam on the
+        /// line. False if the window could not be read back afterwards.
+        func settleLeading(_ index: Int) -> Bool {
+            let window = leading[index]
+            let outerEdge = target.leading[index].minX
+            let width = max(1, line - outerEdge)
+            let frame = current.leading[index]
             var wrote = false
-            if abs(current.left.minX - leftEdge) > tolerance {
-                left.setPosition(CGPoint(x: leftEdge, y: current.left.minY))
+            if abs(frame.minX - outerEdge) > tolerance {
+                window.setPosition(CGPoint(x: outerEdge, y: frame.minY))
                 wrote = true
             }
-            if abs(current.left.width - width) > tolerance {
-                left.setSize(CGSize(width: width, height: current.left.height))
+            if abs(frame.width - width) > tolerance {
+                window.setSize(CGSize(width: width, height: frame.height))
                 wrote = true
             }
             guard wrote else { return true }
-            guard let frame = left.frame else { return false }
-            current.left = frame
+            guard let read = window.frame else { return false }
+            current.leading[index] = read
             return true
         }
 
-        /// Asks the right window for a width, with its right edge held.
+        /// Puts the left edge of a window on the right of the seam `gap`
+        /// after the line, with its right edge held.
         ///
         /// Position and size can only be set one after the other, so for a
         /// moment the window is in neither frame. The order is chosen so
@@ -118,18 +147,21 @@ enum SnapDividerResize {
         /// the screen cannot be seen, and never falls short of it, which
         /// would show what is behind: a window that shrinks is moved first,
         /// one that grows is resized first.
-        func resizeRight(to width: CGFloat) -> Bool {
-            var frame = current.right
+        func settleTrailing(_ index: Int) -> Bool {
+            let window = trailing[index]
+            let outerEdge = target.trailing[index].maxX
+            let width = max(1, outerEdge - (line + gap))
+            var frame = current.trailing[index]
             func readBack() -> Bool {
-                guard let read = right.frame else { return false }
+                guard let read = window.frame else { return false }
                 frame = read
                 return true
             }
             func move(toWidth width: CGFloat) {
-                right.setPosition(CGPoint(x: rightEdge - width, y: frame.minY))
+                window.setPosition(CGPoint(x: outerEdge - width, y: frame.minY))
             }
             func resize() {
-                right.setSize(CGSize(width: width, height: frame.height))
+                window.setSize(CGSize(width: width, height: frame.height))
             }
 
             if width < frame.width - tolerance {
@@ -150,46 +182,64 @@ enum SnapDividerResize {
                 }
             }
             // Whatever width it took, its right edge goes back where it was.
-            if abs(frame.maxX - rightEdge) > tolerance {
+            if abs(frame.maxX - outerEdge) > tolerance {
                 move(toWidth: frame.width)
                 guard readBack() else { return false }
             }
-            current.right = frame
+            current.trailing[index] = frame
             return true
         }
 
-        func rest(besides width: CGFloat) -> CGFloat { max(1, room - width) }
-        func took(_ width: CGFloat, _ offered: CGFloat) -> Bool { abs(width - offered) <= tolerance }
-
-        let leftGivesWay = target.left.width <= current.left.width
-        let readable: Bool
-        if leftGivesWay == cautious {
-            readable = resizeLeft(to: target.left.width)
-                && resizeRight(to: rest(besides: current.left.width))
-                && (took(current.right.width, rest(besides: current.left.width))
-                    || resizeLeft(to: rest(besides: current.right.width)))
-        } else {
-            readable = resizeRight(to: target.right.width)
-                && resizeLeft(to: rest(besides: current.right.width))
-                && (took(current.left.width, rest(besides: current.right.width))
-                    || resizeRight(to: rest(besides: current.left.width)))
+        /// Where one side's windows let the line be, now that they have
+        /// answered. A window reaching across the line would not shrink that
+        /// far, and the line goes to it. Failing that, a window stopping
+        /// short of the line would not grow that far, and the line goes to
+        /// it, so the other side can close the space.
+        func lineAgreed(byLeadingSide leadingSide: Bool) -> CGFloat {
+            let edges = leadingSide ? current.leading.map { $0.maxX } : current.trailing.map { $0.minX - gap }
+            guard let lowest = edges.min(), let highest = edges.max() else { return line }
+            let across = leadingSide ? highest : lowest
+            let short = leadingSide ? lowest : highest
+            if abs(across - line) > tolerance, (across > line) == leadingSide { return across }
+            if abs(short - line) > tolerance { return short }
+            return line
         }
-        guard readable else { return Outcome(requested: target, final: nil) }
 
-        // Two windows that both chose their own width leave space over. It
-        // goes to the far right, not between them: a position is never
-        // refused, so the right window can always be slid up to the left one.
-        if current.right.minX - (current.left.maxX + gap) > tolerance {
-            right.setPosition(CGPoint(x: current.left.maxX + gap, y: current.right.minY))
-            guard let moved = right.frame else { return Outcome(requested: target, final: nil) }
-            current.right = moved
+        let leadingGivesWay = line <= current.leadingEdge
+        let sides = leadingGivesWay == cautious ? [true, false] : [false, true]
+        for _ in 0..<3 {
+            var revised = false
+            for leadingSide in sides {
+                for index in (leadingSide ? leading : trailing).indices {
+                    guard leadingSide ? settleLeading(index) : settleTrailing(index) else { return unreadable }
+                }
+                let agreed = lineAgreed(byLeadingSide: leadingSide)
+                if abs(agreed - line) > tolerance {
+                    line = agreed
+                    revised = true
+                }
+            }
+            if !revised { break }
+        }
+
+        // Windows on both sides that chose their own width leave space over.
+        // It goes to the far right, not between them: a position is never
+        // refused, so a window on the right can always be slid up to the
+        // left side.
+        let reach = current.leadingEdge
+        for index in trailing.indices where current.trailing[index].minX - (reach + gap) > tolerance {
+            trailing[index].setPosition(CGPoint(x: reach + gap, y: current.trailing[index].minY))
+            guard let moved = trailing[index].frame else { return unreadable }
+            current.trailing[index] = moved
         }
         return Outcome(requested: target, final: current)
     }
 
-    private static func read(_ left: SnapDividerWindow, _ right: SnapDividerWindow) -> SnapDividerGeometry.Frames? {
-        guard let leftFrame = left.frame, let rightFrame = right.frame else { return nil }
-        return SnapDividerGeometry.Frames(left: leftFrame, right: rightFrame)
+    private static func read(_ leading: [SnapDividerWindow], _ trailing: [SnapDividerWindow]) -> SnapDividerGeometry.Frames? {
+        let leadingFrames = leading.compactMap { $0.frame }
+        let trailingFrames = trailing.compactMap { $0.frame }
+        guard leadingFrames.count == leading.count, trailingFrames.count == trailing.count else { return nil }
+        return SnapDividerGeometry.Frames(leading: leadingFrames, trailing: trailingFrames)
     }
 }
 
@@ -206,8 +256,8 @@ enum SnapDividerResize {
 final class SnapDividerResizeSession {
     typealias Frames = SnapDividerGeometry.Frames
 
-    private let left: SnapDividerWindow
-    private let right: SnapDividerWindow
+    private let leading: [SnapDividerWindow]
+    private let trailing: [SnapDividerWindow]
     private let gap: CGFloat
     private let work: (@escaping () -> Void) -> Void
     private let reply: (@escaping () -> Void) -> Void
@@ -232,12 +282,12 @@ final class SnapDividerResizeSession {
     ///   - reply: Runs a block back on the main thread.
     ///   - begin: Called from `work` before the first resize. What it returns
     ///     is called from `work` after the last one.
-    init(left: SnapDividerWindow, right: SnapDividerWindow, gap: CGFloat,
+    init(leading: [SnapDividerWindow], trailing: [SnapDividerWindow], gap: CGFloat,
          work: @escaping (@escaping () -> Void) -> Void,
          reply: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) },
          begin: @escaping () -> () -> Void = { {} }) {
-        self.left = left
-        self.right = right
+        self.leading = leading
+        self.trailing = trailing
         self.gap = gap
         self.work = work
         self.reply = reply
@@ -277,7 +327,7 @@ final class SnapDividerResizeSession {
             let cautious = self.cautious
             work { [self] in
                 if end == nil { end = begin() }
-                let outcome = SnapDividerResize.apply(target, gap: gap, left: left, right: right,
+                let outcome = SnapDividerResize.apply(target, gap: gap, leading: leading, trailing: trailing,
                                                       from: known, cautious: cautious)
                 reply { [self] in
                     isWorking = false

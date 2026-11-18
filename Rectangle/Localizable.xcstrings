@@ -11969,6 +11969,9 @@
         }
       }
     },
+    "Drag the edge between windows to resize both" : {
+
+    },
     "Drag to screen edge tiling is enabled in both Rectangle and macOS." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18279,6 +18282,9 @@
           }
         }
       }
+    },
+    "Hover cursor over the edge between two windows, then drag the handle that appears" : {
+
     },
     "ⓘ" : {
       "extractionState" : "manual",

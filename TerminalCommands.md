@@ -48,6 +48,7 @@ The preferences window is purposefully slim, but there's a lot that can be modif
 - [Keep window size when moving a maximized window to another display](#keep-window-size-when-moving-a-maximized-window-to-another-display)
 - [Repeat the last Rectangle action when moving to another display](#repeat-the-last-rectangle-action-when-moving-to-another-display)
 - [Offset cycling position when overlapping another window](#offset-cycling-position-when-overlapping-another-window)
+- [Resize two windows at once by dragging the edge between them](#resize-two-windows-at-once-by-dragging-the-edge-between-them)
 - [Move windows that can't fill the snap area to the edge](#move-windows-that-cant-fill-the-snap-area-to-the-edge)
 - [Apps using native resize during window animations](#apps-using-native-resize-during-window-animations)
 
@@ -769,6 +770,16 @@ When multiple windows are stacked at the same grid position, resting the cursor 
 ```bash
 defaults write com.knollsoft.Rectangle stackBadge -bool true
 ```
+
+## Resize two windows at once by dragging the edge between them
+
+When two windows sit side by side, or one above the other, resting the cursor on the edge they share shows a small handle. Dragging the handle moves that edge, so one window grows as the other shrinks. Where several windows line up along one side of the edge, such as two right quarters next to a left half, they all follow.
+
+```bash
+defaults write com.knollsoft.Rectangle snapDivider -bool true
+```
+
+Restart Rectangle after changing this preference. It can also be switched on in the settings window, which takes effect at once.
 
 ## Move windows that can't fill the snap area to the edge
 

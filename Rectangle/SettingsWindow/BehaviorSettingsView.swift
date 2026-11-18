@@ -109,6 +109,14 @@ struct BehaviorSettingsView: View {
                         Toggle("Remove top gap when snapping to top edge", isOn: $viewModel.skipGapTopEdge)
                             .toggleStyle(.switch)
                     }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Toggle("Drag the edge between windows to resize both", isOn: $viewModel.snapDivider)
+                            .toggleStyle(.switch)
+                        Text("Hover cursor over the edge between two windows, then drag the handle that appears")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             
