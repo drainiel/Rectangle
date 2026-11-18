@@ -69,7 +69,6 @@ final class SnapDividerPanel: NSPanel {
         }
         setFrame(frame(forPill: pillFrame), display: true)
         orderFrontRegardless()
-        BackgroundCursor.setAllowed(true)
         updateCursor()
     }
 
@@ -81,15 +80,18 @@ final class SnapDividerPanel: NSPanel {
         }
     }
 
+    /// Takes the handle off the screen and puts back everything it changed.
+    /// This has to work for a handle the system has already hidden, as it
+    /// does on a change of Space: the cursor would otherwise be left as it
+    /// was, and Rectangle left able to change it.
     func hide() {
-        guard isVisible else { return }
         isDragging = false
+        stopReassertingCursor()
         // No exit event arrives for a window that goes away under the cursor.
         if pointerIsOnHandle {
             takeDownCursor()
         }
         pointerIsOnHandle = false
-        stopReassertingCursor()
         BackgroundCursor.setAllowed(false)
         orderOut(nil)
     }
@@ -233,9 +235,15 @@ final class SnapDividerPanel: NSPanel {
     func updateCursor() {
         let onHandle = isVisible && (isDragging || frame.contains(NSEvent.mouseLocation))
         if onHandle {
+            // Rectangle may only change the cursor in the background for as
+            // long as the pointer is on the handle.
+            if !pointerIsOnHandle {
+                BackgroundCursor.setAllowed(true)
+            }
             resizeCursor.set()
         } else if pointerIsOnHandle {
             takeDownCursor()
+            BackgroundCursor.setAllowed(false)
         }
         pointerIsOnHandle = onHandle
     }
@@ -275,8 +283,8 @@ private enum BackgroundCursor {
                 unsafeBitCast(setConnectionProperty, to: SetConnectionProperty.self))
     }()
 
-    /// Only meant to be on while the handle is on screen, so nothing else
-    /// Rectangle does can reach the cursor of the app in front.
+    /// Only meant to be on while the pointer is on the handle, so nothing
+    /// else Rectangle does can reach the cursor of the app in front.
     static func setAllowed(_ allowed: Bool) {
         guard let functions else { return }
         let connection = functions.mainConnectionID()

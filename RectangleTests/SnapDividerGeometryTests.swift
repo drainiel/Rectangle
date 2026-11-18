@@ -1148,3 +1148,87 @@ final class SnapDividerGroupTests: XCTestCase {
     }
 }
 
+final class SnapDividerDragToSnapTests: XCTestCase {
+    private final class Manager: SnappingManager {
+        var begunDrags = 0
+        @discardableResult
+        override func beginNativeDrag() -> UUID {
+            begunDrags += 1
+            return super.beginNativeDrag()
+        }
+    }
+
+    private var savedSnapping: Bool?
+    private var savedObtainOnClick: Bool?
+
+    override func setUp() {
+        super.setUp()
+        savedSnapping = Defaults.windowSnapping.enabled
+        savedObtainOnClick = Defaults.obtainWindowOnClick.enabled
+        Defaults.windowSnapping.enabled = false
+        // Keeps a tracked mouse-down away from the accessibility hit-test under the cursor.
+        Defaults.obtainWindowOnClick.enabled = false
+    }
+
+    override func tearDown() {
+        Defaults.windowSnapping.enabled = savedSnapping
+        Defaults.obtainWindowOnClick.enabled = savedObtainOnClick
+        super.tearDown()
+    }
+
+    /// A mouse event as the window server reports it, on the window with the given number.
+    private func mouse(_ type: CGEventType, onWindow windowNumber: Int) throws -> NSEvent {
+        let cgEvent = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: type,
+                                            mouseCursorPosition: CGPoint(x: 720, y: 400), mouseButton: .left))
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowNumber))
+        return try XCTUnwrap(NSEvent(cgEvent: cgEvent))
+    }
+
+    func testAPressOnTheHandleIsItsTarget() throws {
+        let handle = SnapDividerPanel()
+        let other = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 100, height: 100), styleMask: .borderless,
+                             backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+
+        XCTAssertTrue(SnapDividerPanel.isTarget(of: try mouse(.leftMouseDown, onWindow: handle.windowNumber)))
+        XCTAssertFalse(SnapDividerPanel.isTarget(of: try mouse(.leftMouseDown, onWindow: other.windowNumber)),
+                       "Another of Rectangle's own windows")
+        XCTAssertFalse(SnapDividerPanel.isTarget(of: try mouse(.leftMouseDown, onWindow: 0)),
+                       "A window of another app, or none")
+    }
+
+    func testAPressOnTheHandleIsFoundThroughTheEventsOwnWindowToo() throws {
+        let handle = SnapDividerPanel()
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [],
+                                                     timestamp: 0, windowNumber: handle.windowNumber, context: nil,
+                                                     eventNumber: 0, clickCount: 1, pressure: 1))
+
+        XCTAssertTrue(SnapDividerPanel.isTarget(of: event))
+    }
+
+    func testDragToSnapLeavesADragOfTheHandleAlone() throws {
+        let handle = SnapDividerPanel()
+        let manager = Manager()
+
+        manager.handle(event: try mouse(.leftMouseDown, onWindow: handle.windowNumber))
+        XCTAssertEqual(manager.begunDrags, 0)
+        manager.handle(event: try mouse(.leftMouseDragged, onWindow: handle.windowNumber))
+        XCTAssertEqual(manager.windowIdAttempt, 0, "no window lookup during the drag")
+        XCTAssertNil(manager.windowElement)
+        XCTAssertFalse(manager.windowMoving)
+        manager.handle(event: try mouse(.leftMouseUp, onWindow: handle.windowNumber))
+        XCTAssertEqual(manager.begunDrags, 0)
+    }
+
+    func testDragToSnapTracksTheNextGestureAsUsual() throws {
+        let handle = SnapDividerPanel()
+        let manager = Manager()
+
+        manager.handle(event: try mouse(.leftMouseDown, onWindow: handle.windowNumber))
+        manager.handle(event: try mouse(.leftMouseUp, onWindow: handle.windowNumber))
+        manager.handle(event: try mouse(.leftMouseDown, onWindow: 0))
+        XCTAssertEqual(manager.begunDrags, 1, "the ignored press does not carry over")
+        manager.handle(event: try mouse(.leftMouseUp, onWindow: 0))
+    }
+}
+
