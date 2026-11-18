@@ -71,6 +71,7 @@ final class SnapDividerPanel: NSPanel {
             takeDownCursor()
         }
         pointerIsOnHandle = false
+        stopReassertingCursor()
         BackgroundCursor.setAllowed(false)
         orderOut(nil)
     }
@@ -84,15 +85,60 @@ final class SnapDividerPanel: NSPanel {
         return .resizeLeftRight
     }
 
+    /// How often, and how many times, the cursor is set again after the
+    /// pointer has moved on the handle. See `pointerMoved()`.
+    private static let cursorReassertInterval: DispatchTimeInterval = .microseconds(500)
+    private static let cursorReassertCount = 12
+
     private var pointerIsOnHandle = false
+    private var cursorReassertsLeft = 0
+    private lazy var cursorReassertTimer: DispatchSourceTimer = {
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
+        timer.setEventHandler { [weak self] in
+            self?.reassertCursor()
+        }
+        timer.schedule(deadline: .distantFuture)
+        timer.resume()
+        return timer
+    }()
+
+    /// The pointer has moved on the handle, so the cursor is set, and then
+    /// set again a few times in the milliseconds that follow.
+    ///
+    /// Some apps set their own cursor on every mouse move while they are in
+    /// front, even with the pointer over another app's window (Sublime Text
+    /// does). They hear of the same move at the same moment, so whichever
+    /// app answers last has its cursor showing until the next move, and the
+    /// two alternate. Setting it again straight away leaves the other app's
+    /// cursor on screen for a fraction of a millisecond at most.
+    func pointerMoved() {
+        updateCursor()
+        guard pointerIsOnHandle else { return }
+        cursorReassertsLeft = Self.cursorReassertCount
+        cursorReassertTimer.schedule(deadline: .now() + Self.cursorReassertInterval,
+                                     repeating: Self.cursorReassertInterval,
+                                     leeway: .nanoseconds(0))
+    }
+
+    private func reassertCursor() {
+        updateCursor()
+        cursorReassertsLeft -= 1
+        if cursorReassertsLeft <= 0 || !pointerIsOnHandle {
+            stopReassertingCursor()
+        }
+    }
+
+    private func stopReassertingCursor() {
+        cursorReassertsLeft = 0
+        cursorReassertTimer.schedule(deadline: .distantFuture)
+    }
 
     /// Puts the resize cursor up while the pointer is on the handle and takes
     /// it down once it has left.
     ///
-    /// Called for every mouse event on the handle, and from the manager's
-    /// timer as well: the handle can appear under a pointer that is not
-    /// moving, and the app in front goes on setting its own cursor whenever
-    /// it likes.
+    /// Called from the manager's timer as well as for mouse events: the
+    /// handle can appear under a pointer that is not moving, and the system
+    /// resets the cursor just after it does.
     func updateCursor() {
         let onHandle = isVisible && frame.contains(NSEvent.mouseLocation)
         if onHandle {
@@ -184,11 +230,11 @@ private final class SnapDividerHandleView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        panel?.updateCursor()
+        panel?.pointerMoved()
     }
 
     override func mouseMoved(with event: NSEvent) {
-        panel?.updateCursor()
+        panel?.pointerMoved()
     }
 
     override func mouseExited(with event: NSEvent) {
