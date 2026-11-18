@@ -3,8 +3,9 @@
 import Cocoa
 
 /// The handle shown on the seam between two side-by-side windows: a short
-/// pill, centred on the seam. It takes the mouse but never the keyboard, and
-/// never activates Rectangle, so the app being worked in keeps its focus.
+/// pill, centred on the seam, that can be dragged sideways. It takes the
+/// mouse but never the keyboard, and never activates Rectangle, so the app
+/// being worked in keeps its focus.
 final class SnapDividerPanel: NSPanel {
 
     /// How wide the pill is drawn, across the seam.
@@ -66,6 +67,7 @@ final class SnapDividerPanel: NSPanel {
 
     func hide() {
         guard isVisible else { return }
+        isDragging = false
         // No exit event arrives for a window that goes away under the cursor.
         if pointerIsOnHandle {
             takeDownCursor()
@@ -74,6 +76,57 @@ final class SnapDividerPanel: NSPanel {
         stopReassertingCursor()
         BackgroundCursor.setAllowed(false)
         orderOut(nil)
+    }
+
+    // MARK: Dragging
+
+    /// Asked when the mouse goes down on the handle. Returning false leaves
+    /// the press without effect.
+    var dragShouldBegin: (() -> Bool)?
+    /// Called as the pointer moves during a drag, with how far it now is
+    /// from where the drag began: points, positive to the right.
+    var dragMoved: ((CGFloat) -> Void)?
+    /// Called once when the mouse comes up, with the final distance.
+    var dragEnded: ((CGFloat) -> Void)?
+
+    private(set) var isDragging = false
+    private var dragStartX: CGFloat = 0
+
+    /// Moves the handle sideways so its pill starts at `pillMinX`.
+    func movePill(toMinX pillMinX: CGFloat) {
+        setFrameOrigin(CGPoint(x: pillMinX - Self.hitPadding, y: frame.minY))
+    }
+
+    /// Whether a mouse event landed on a snap divider handle. Such a press
+    /// drags the handle, not a window, and drag-to-snap has to leave it be.
+    static func isTarget(of event: NSEvent) -> Bool {
+        if event.window is SnapDividerPanel { return true }
+        guard let number = event.cgEvent?.getIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent),
+              number > 0
+        else { return false }
+        return NSApp.window(withWindowNumber: Int(number)) is SnapDividerPanel
+    }
+
+    // The window moves under the pointer during a drag, so distances are
+    // measured on the screen and not from the event's place in the window.
+    fileprivate func mouseWentDown() {
+        guard !isDragging, dragShouldBegin?() == true else { return }
+        isDragging = true
+        dragStartX = NSEvent.mouseLocation.x
+        updateCursor()
+    }
+
+    fileprivate func mouseWasDragged() {
+        guard isDragging else { return }
+        dragMoved?(NSEvent.mouseLocation.x - dragStartX)
+        updateCursor()
+    }
+
+    fileprivate func mouseCameUp() {
+        guard isDragging else { return }
+        isDragging = false
+        dragEnded?(NSEvent.mouseLocation.x - dragStartX)
+        updateCursor()
     }
 
     // MARK: Cursor
@@ -139,8 +192,11 @@ final class SnapDividerPanel: NSPanel {
     /// Called from the manager's timer as well as for mouse events: the
     /// handle can appear under a pointer that is not moving, and the system
     /// resets the cursor just after it does.
+    ///
+    /// During a drag the pointer counts as on the handle wherever it is: it
+    /// runs ahead of a handle that has reached the end of its range.
     func updateCursor() {
-        let onHandle = isVisible && frame.contains(NSEvent.mouseLocation)
+        let onHandle = isVisible && (isDragging || frame.contains(NSEvent.mouseLocation))
         if onHandle {
             Self.resizeCursor.set()
         } else if pointerIsOnHandle {
@@ -243,9 +299,17 @@ private final class SnapDividerHandleView: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    // Taken so a click on the handle does not fall through to the windows
-    // underneath.
-    override func mouseDown(with event: NSEvent) {}
+    override func mouseDown(with event: NSEvent) {
+        panel?.mouseWentDown()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        panel?.mouseWasDragged()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        panel?.mouseCameUp()
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let border: CGFloat = 1

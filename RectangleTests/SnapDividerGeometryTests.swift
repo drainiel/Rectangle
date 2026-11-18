@@ -314,3 +314,312 @@ final class SnapDividerMatchTests: XCTestCase {
         XCTAssertEqual(match(windows, at: CGPoint(x: 2400, y: 300), in: secondScreen)?.seam.position, 2400)
     }
 }
+
+final class SnapDividerResizeGeometryTests: XCTestCase {
+    private typealias Frames = SnapDividerGeometry.Frames
+    private let halves = SnapDividerGeometry.Frames(left: CGRect(x: 0, y: 25, width: 720, height: 875),
+                                                   right: CGRect(x: 720, y: 25, width: 720, height: 875))
+
+    private func resized(_ frames: Frames? = nil, gap: CGFloat = 0, minimumLeft: CGFloat = 150,
+                         minimumRight: CGFloat = 150, seamAt position: CGFloat) -> Frames {
+        SnapDividerGeometry.resized(frames ?? halves, gap: gap, minimumLeftWidth: minimumLeft,
+                                    minimumRightWidth: minimumRight, seamAt: position)
+    }
+
+    func testIntendedGapPutsANearMissBackOnTheConfiguredGap() {
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 0, configuredGap: 0, tolerance: 8), 0)
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 5, configuredGap: 0, tolerance: 8), 0,
+                       "A terminal that stopped a cell short")
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: -6, configuredGap: 0, tolerance: 8), 0,
+                       "A window reaching past its edge")
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 23, configuredGap: 20, tolerance: 8), 20)
+    }
+
+    func testIntendedGapKeepsADistanceThatWasArrangedThatWay() {
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 0, configuredGap: 20, tolerance: 8), 0,
+                       "Touching windows stay touching although a gap is configured")
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: 15, configuredGap: 0, tolerance: 8), 15)
+        XCTAssertEqual(SnapDividerGeometry.intendedGap(distance: -15, configuredGap: 0, tolerance: 8), 0)
+    }
+
+    func testMovingTheSeamGrowsOneWindowAndShrinksTheOther() {
+        let moved = resized(seamAt: 600)
+
+        XCTAssertEqual(moved.left, CGRect(x: 0, y: 25, width: 600, height: 875))
+        XCTAssertEqual(moved.right, CGRect(x: 600, y: 25, width: 840, height: 875))
+        XCTAssertEqual(moved.seamPosition, 600)
+    }
+
+    func testMovedSeamKeepsTheGapCentredOnIt() {
+        let gapped = Frames(left: CGRect(x: 20, y: 45, width: 690, height: 835),
+                            right: CGRect(x: 730, y: 45, width: 690, height: 835))
+
+        let moved = resized(gapped, gap: 20, seamAt: 900)
+
+        XCTAssertEqual(moved.left.maxX, 890)
+        XCTAssertEqual(moved.right.minX, 910)
+        XCTAssertEqual(moved.left.minX, 20, "The far edges stay where they were")
+        XCTAssertEqual(moved.right.maxX, 1420)
+    }
+
+    func testSeamStopsAtEachWindowsMinimumWidth() {
+        XCTAssertEqual(resized(minimumLeft: 400, seamAt: 100).left.width, 400)
+        XCTAssertEqual(resized(minimumRight: 500, seamAt: 1400).right.width, 500)
+        XCTAssertEqual(resized(minimumRight: 500, seamAt: 1400).left.width, 940)
+    }
+
+    func testMinimumWidthsAllowForTheGap() {
+        let gapped = Frames(left: CGRect(x: 0, y: 25, width: 710, height: 875),
+                            right: CGRect(x: 730, y: 25, width: 710, height: 875))
+
+        let moved = resized(gapped, gap: 20, minimumRight: 500, seamAt: 1400)
+
+        XCTAssertEqual(moved.right, CGRect(x: 940, y: 25, width: 500, height: 875))
+        XCTAssertEqual(moved.left.maxX, 920)
+    }
+
+    func testFacingEdgesLandOnWholePoints() {
+        XCTAssertEqual(resized(seamAt: 600.4).left.maxX, 600)
+        XCTAssertEqual(resized(seamAt: 600.6).right.minX, 601)
+        XCTAssertEqual(resized(gap: 5, seamAt: 600).left.maxX, 598)
+        XCTAssertEqual(resized(gap: 5, seamAt: 600).right.minX, 603)
+    }
+
+    func testNothingMovesWhenTheMinimumWidthsCannotBothFit() {
+        XCTAssertEqual(resized(minimumLeft: 800, minimumRight: 800, seamAt: 600), halves)
+        XCTAssertEqual(resized(seamAt: .nan), halves)
+    }
+
+    func testMovingTheSeamLeavesVerticalGeometryAlone() {
+        let uneven = Frames(left: CGRect(x: 0, y: 25, width: 720, height: 875),
+                            right: CGRect(x: 720, y: 25, width: 720, height: 437))
+
+        let moved = resized(uneven, seamAt: 500)
+
+        XCTAssertEqual(moved.left, CGRect(x: 0, y: 25, width: 500, height: 875))
+        XCTAssertEqual(moved.right, CGRect(x: 500, y: 25, width: 940, height: 437))
+    }
+
+    func testNothingToReconcileWhenBothWindowsTookWhatWasAsked() {
+        let requested = resized(seamAt: 600)
+
+        XCTAssertEqual(SnapDividerGeometry.reconciled(requested: requested, actual: requested, gap: 0), requested)
+    }
+
+    func testWindowThatWouldNotShrinkKeepsItsWidthAndTheOtherGivesWay() {
+        let requested = resized(seamAt: 400)
+        var actual = requested
+        actual.left.size.width = 500
+
+        let reconciled = SnapDividerGeometry.reconciled(requested: requested, actual: actual, gap: 0)
+
+        XCTAssertEqual(reconciled.left, CGRect(x: 0, y: 25, width: 500, height: 875))
+        XCTAssertEqual(reconciled.right, CGRect(x: 500, y: 25, width: 940, height: 875))
+    }
+
+    func testRightWindowThatCameOutNarrowerKeepsItsFarEdgeAndTheLeftFillsIn() {
+        // A terminal on the right, asked for 840 pt, took 833.
+        let requested = resized(seamAt: 600)
+        var actual = requested
+        actual.right.size.width = 833
+
+        let reconciled = SnapDividerGeometry.reconciled(requested: requested, actual: actual, gap: 0)
+
+        XCTAssertEqual(reconciled.right, CGRect(x: 607, y: 25, width: 833, height: 875))
+        XCTAssertEqual(reconciled.left, CGRect(x: 0, y: 25, width: 607, height: 875))
+    }
+
+    func testReconcilingKeepsTheGap() {
+        let gapped = Frames(left: CGRect(x: 20, y: 45, width: 690, height: 835),
+                            right: CGRect(x: 730, y: 45, width: 690, height: 835))
+        let requested = resized(gapped, gap: 20, seamAt: 500)
+        var actual = requested
+        actual.left.size.width = 600
+
+        let reconciled = SnapDividerGeometry.reconciled(requested: requested, actual: actual, gap: 20)
+
+        XCTAssertEqual(reconciled.left.maxX, 620)
+        XCTAssertEqual(reconciled.right.minX, 640)
+        XCTAssertEqual(reconciled.right.maxX, 1420)
+    }
+
+    func testWhenBothChoseTheirOwnWidthTheLeftOneWins() {
+        let requested = resized(seamAt: 600)
+        var actual = requested
+        actual.left.size.width = 595
+        actual.right.size.width = 833
+
+        let reconciled = SnapDividerGeometry.reconciled(requested: requested, actual: actual, gap: 0)
+
+        XCTAssertEqual(reconciled.left.width, 595)
+        XCTAssertEqual(reconciled.right, CGRect(x: 595, y: 25, width: 845, height: 875))
+    }
+
+    func testADifferenceWithinToleranceIsNotARefusal() {
+        let requested = resized(seamAt: 600)
+        var actual = requested
+        actual.left.size.width = 600.5
+
+        XCTAssertEqual(SnapDividerGeometry.reconciled(requested: requested, actual: actual, gap: 0), requested)
+    }
+
+    func testReconcilingStaysWithTheRequestWhenNothingWouldBeLeftForAWindow() {
+        let requested = resized(seamAt: 600)
+        var actual = requested
+        actual.left.size.width = 1440
+
+        XCTAssertEqual(SnapDividerGeometry.reconciled(requested: requested, actual: actual, gap: 0), requested)
+    }
+}
+
+final class SnapDividerResizeTests: XCTestCase {
+    private typealias Frames = SnapDividerGeometry.Frames
+
+    /// A window that takes any position, and the width its app allows.
+    private final class FakeWindow: SnapDividerWindow {
+        let name: String
+        private var current: CGRect
+        private let allowedWidth: (CGFloat) -> CGFloat
+        private let calls: Calls
+        var readable = true
+
+        init(_ name: String, _ frame: CGRect, calls: Calls, allowedWidth: @escaping (CGFloat) -> CGFloat = { $0 }) {
+            self.name = name
+            current = frame
+            self.calls = calls
+            self.allowedWidth = allowedWidth
+        }
+
+        var frame: CGRect? { readable ? current : nil }
+
+        func setPosition(_ position: CGPoint) {
+            calls.made.append("\(name) position")
+            current.origin = position
+        }
+
+        func setSize(_ size: CGSize) {
+            calls.made.append("\(name) size")
+            current.size = CGSize(width: allowedWidth(size.width), height: size.height)
+        }
+    }
+
+    private final class Calls {
+        var made = [String]()
+    }
+
+    private let calls = Calls()
+    private let leftHalf = CGRect(x: 0, y: 25, width: 720, height: 875)
+    private let rightHalf = CGRect(x: 720, y: 25, width: 720, height: 875)
+
+    private func target(seamAt position: CGFloat, gap: CGFloat = 0) -> Frames {
+        SnapDividerGeometry.resized(Frames(left: leftHalf, right: rightHalf), gap: gap,
+                                    minimumLeftWidth: 150, minimumRightWidth: 150, seamAt: position)
+    }
+
+    /// A terminal: only as wide as a whole number of 7 pt cells.
+    private func cells(_ width: CGFloat) -> CGFloat { (width / 7).rounded(.down) * 7 }
+
+    func testBothWindowsAreWrittenOnceWhenTheyTakeWhatIsAsked() {
+        let left = FakeWindow("left", leftHalf, calls: calls)
+        let right = FakeWindow("right", rightHalf, calls: calls)
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 600), gap: 0, left: left, right: right)
+
+        XCTAssertEqual(outcome.final, target(seamAt: 600))
+        XCTAssertNil(outcome.corrected)
+        XCTAssertEqual(calls.made, ["left size", "right position", "right size"],
+                       "The shrinking window goes first, and the growing one moves before it grows")
+    }
+
+    func testMovingTheSeamRightShrinksTheRightWindowBeforeGrowingTheLeft() {
+        let left = FakeWindow("left", leftHalf, calls: calls)
+        let right = FakeWindow("right", rightHalf, calls: calls)
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 900), gap: 0, left: left, right: right)
+
+        XCTAssertEqual(outcome.final, target(seamAt: 900))
+        XCTAssertEqual(calls.made, ["right size", "right position", "left size"])
+    }
+
+    func testNothingIsWrittenWhenTheWindowsAreAlreadyThere() {
+        let left = FakeWindow("left", leftHalf, calls: calls)
+        let right = FakeWindow("right", rightHalf, calls: calls)
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 720), gap: 0, left: left, right: right)
+
+        XCTAssertEqual(outcome.final, Frames(left: leftHalf, right: rightHalf))
+        XCTAssertEqual(calls.made, [])
+    }
+
+    func testWindowWithAnUnreportedMinimumKeepsItAndTheOtherIsAskedAgain() {
+        let left = FakeWindow("left", leftHalf, calls: calls) { max($0, 500) }
+        let right = FakeWindow("right", rightHalf, calls: calls)
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 300), gap: 0, left: left, right: right)
+
+        XCTAssertEqual(outcome.final?.left, CGRect(x: 0, y: 25, width: 500, height: 875))
+        XCTAssertEqual(outcome.final?.right, CGRect(x: 500, y: 25, width: 940, height: 875))
+        XCTAssertNotNil(outcome.corrected)
+        XCTAssertEqual(outcome.requested, target(seamAt: 300))
+    }
+
+    func testTerminalOnTheRightEndsFlushWithItsFarEdgeAndTheLeftWindowMeetsIt() {
+        let left = FakeWindow("left", leftHalf, calls: calls)
+        let right = FakeWindow("right", rightHalf, calls: calls, allowedWidth: cells)
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 603), gap: 0, left: left, right: right)
+
+        // 837 pt was asked of the terminal, and 833 is the most whole cells.
+        XCTAssertEqual(outcome.final?.right, CGRect(x: 607, y: 25, width: 833, height: 875))
+        XCTAssertEqual(outcome.final?.left, CGRect(x: 0, y: 25, width: 607, height: 875))
+    }
+
+    func testTerminalOnTheLeftIsMetByTheRightWindow() {
+        let left = FakeWindow("left", leftHalf, calls: calls, allowedWidth: cells)
+        let right = FakeWindow("right", rightHalf, calls: calls)
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 600), gap: 0, left: left, right: right)
+
+        XCTAssertEqual(outcome.final?.left, CGRect(x: 0, y: 25, width: 595, height: 875))
+        XCTAssertEqual(outcome.final?.right, CGRect(x: 595, y: 25, width: 845, height: 875))
+    }
+
+    func testTwoTerminalsStillMeetAtTheSeam() {
+        let left = FakeWindow("left", leftHalf, calls: calls, allowedWidth: cells)
+        let right = FakeWindow("right", rightHalf, calls: calls, allowedWidth: cells)
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 600), gap: 0, left: left, right: right)
+
+        guard let final = outcome.final else { return XCTFail("The windows should be readable") }
+        XCTAssertEqual(final.left.maxX, final.right.minX, "No gap and no overlap between the two")
+        XCTAssertEqual(final.left.minX, 0)
+        XCTAssertLessThanOrEqual(final.right.maxX, 1440)
+        XCTAssertGreaterThan(final.right.maxX, 1433, "The slack is less than one cell, at the far edge")
+    }
+
+    func testRefusalIsReconciledAroundAGap() {
+        let gappedLeft = CGRect(x: 20, y: 45, width: 690, height: 835)
+        let gappedRight = CGRect(x: 730, y: 45, width: 690, height: 835)
+        let left = FakeWindow("left", gappedLeft, calls: calls) { max($0, 600) }
+        let right = FakeWindow("right", gappedRight, calls: calls)
+        let target = SnapDividerGeometry.resized(Frames(left: gappedLeft, right: gappedRight), gap: 20,
+                                                 minimumLeftWidth: 150, minimumRightWidth: 150, seamAt: 400)
+
+        let outcome = SnapDividerResize.apply(target, gap: 20, left: left, right: right)
+
+        XCTAssertEqual(outcome.final?.left.maxX, 620)
+        XCTAssertEqual(outcome.final?.right.minX, 640)
+        XCTAssertEqual(outcome.final?.right.maxX, 1420)
+    }
+
+    func testNothingIsWrittenToWindowsThatCannotBeRead() {
+        let left = FakeWindow("left", leftHalf, calls: calls)
+        let right = FakeWindow("right", rightHalf, calls: calls)
+        right.readable = false
+
+        let outcome = SnapDividerResize.apply(target(seamAt: 600), gap: 0, left: left, right: right)
+
+        XCTAssertNil(outcome.final)
+        XCTAssertEqual(calls.made, [])
+    }
+}

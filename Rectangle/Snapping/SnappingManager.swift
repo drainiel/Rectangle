@@ -367,7 +367,10 @@ class SnappingManager {
         case .leftMouseDown:
             // Left alone, as every gesture was while listening stopped for a
             // fullscreen window: no window lookup, no drag tracking.
+            // So is a press on the snap divider handle, which is not a window
+            // being dragged.
             ignoringGesture = fullScreenGate.ignoresGesture(at: event.cgEvent?.location)
+                || SnapDividerPanel.isTarget(of: event)
             if ignoringGesture {
                 // A release that never arrived must not leave the previous
                 // gesture behind, as it would not have before.
